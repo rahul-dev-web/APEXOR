@@ -10,6 +10,7 @@ from app.core.constants import ProtectionState
 from app.models.events import SecurityEventLog
 from app.models.guild import Guild
 from app.security.permissions.policy import DEFAULT_PERMISSION_POLICY
+from app.security.persistence import SecurityPersistence
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class LockdownEngine:
 
     def __init__(self) -> None:
         self.policy = DEFAULT_PERMISSION_POLICY
+        self.persistence = SecurityPersistence()
 
     async def set_protection_state(
         self,
@@ -63,8 +65,6 @@ class LockdownEngine:
             return False
 
         current = ProtectionState(db_guild.protection_state)
-        # DISABLED is an explicit administrative state and must never be
-        # overridden by an automatic event.
         if current == ProtectionState.DISABLED:
             return False
 
@@ -84,14 +84,16 @@ class LockdownEngine:
         actor_id: int | None,
         event_log_id: int | None = None,
     ) -> str:
-        db_guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == guild.id))
-        if db_guild is not None:
+        if db_guild := await session.scalar(select(Guild).where(Guild.discord_guild_id == guild.id)):
             await self.set_protection_state(
                 session,
                 guild.id,
                 ProtectionState.LOCKDOWN,
                 score=100,
             )
+
+        if event_log_id is not None:
+            await self.persistence.mark_containment_started(session, event_log_id)
 
         actions: list[str] = []
         bot_member = guild.me
@@ -130,11 +132,13 @@ class LockdownEngine:
                             exc,
                         )
 
+        containment_success = bool(actions) or actor_id is None or bot_top_role is None
         if event_log_id is not None:
             log = await session.scalar(select(SecurityEventLog).where(SecurityEventLog.id == event_log_id))
             if log is not None:
-                log.status = "CONTAINED"
+                log.status = "CONTAINED" if containment_success else "CONTAINMENT_FAILED"
                 log.action_taken = "; ".join(actions) if actions else "LOCKDOWN_STATE_ONLY"
+            await self.persistence.mark_contained(session, event_log_id, success=containment_success)
 
         await session.commit()
         return "; ".join(actions) if actions else "LOCKDOWN_STATE_ONLY"
