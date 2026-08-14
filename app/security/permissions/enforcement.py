@@ -17,31 +17,31 @@ class EnforcementAction:
 class PermissionEnforcement:
     """Safely removes APXOR-prohibited permissions from manageable roles.
 
-    Enforcement is deliberately conservative: the guild owner, @everyone,
-    managed/integration roles, and roles at/above APXOR's highest role are
-    never mutated. This keeps Discord's role hierarchy as a hard safety
-    boundary rather than trying to bypass it.
+    Enforcement is deliberately conservative: the guild owner's top role,
+    @everyone, managed/integration roles, and roles at/above APXOR's highest
+    role are never mutated. Discord's role hierarchy remains a hard safety
+    boundary.
     """
 
     def __init__(self, policy: PermissionPolicy = DEFAULT_PERMISSION_POLICY) -> None:
         self.policy = policy
 
     def _target_permissions(self, role: discord.Role) -> discord.Permissions:
-        permissions = role.permissions
-        allowed = discord.Permissions(permissions.value)
+        allowed = discord.Permissions(role.permissions.value)
         for name in self.policy.critical_permissions:
             setattr(allowed, name, False)
         return allowed
 
     def plan_role(self, guild: discord.Guild, role: discord.Role) -> EnforcementAction:
         if role.is_default():
-            return EnforcementAction(role.id, role.name, "SKIPPED", reason="@everyone cannot be safely rewritten by APXOR policy")
+            return EnforcementAction(role.id, role.name, "SKIPPED", reason="@everyone is never rewritten")
         if role.managed:
             return EnforcementAction(role.id, role.name, "SKIPPED", reason="Managed/integration role")
         if role >= guild.me.top_role:
             return EnforcementAction(role.id, role.name, "SKIPPED", reason="Role is at or above APXOR hierarchy")
-        if guild.owner_id and role in getattr(guild.get_member(guild.owner_id), "roles", ()):
-            return EnforcementAction(role.id, role.name, "SKIPPED", reason="Owner role is never mutated")
+        owner = guild.get_member(guild.owner_id) if guild.owner_id else None
+        if owner is not None and role.id == owner.top_role.id:
+            return EnforcementAction(role.id, role.name, "SKIPPED", reason="Guild owner's top role is never mutated")
 
         current = self.policy.critical_names(role.permissions)
         if not current:
@@ -62,10 +62,7 @@ class PermissionEnforcement:
                 actions.append(action)
                 continue
             try:
-                await role.edit(
-                    permissions=self._target_permissions(role),
-                    reason=reason,
-                )
+                await role.edit(permissions=self._target_permissions(role), reason=reason)
                 actions.append(EnforcementAction(
                     role.id,
                     role.name,
