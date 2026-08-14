@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.events import SecurityEventLog, SecurityIncident
 from app.models.guild import Guild
 from app.security.events import Detection
+from app.security.incidents import Incident
 
 
 _HIGH = 60
@@ -74,21 +75,32 @@ class SecurityPersistence:
         )
         session.add(log)
         await session.flush()
-
-        if detection.signal.score >= _HIGH:
-            session.add(
-                SecurityIncident(
-                    incident_key=f"{event.guild_id}:{event.fingerprint}",
-                    guild_id=event.guild_id,
-                    actor_discord_id=event.actor_id,
-                    incident_type=event.event_type.value,
-                    severity=severity,
-                    risk_score=detection.signal.score,
-                    status="OPEN",
-                    event_count=1,
-                    summary=detection.signal.reason,
-                )
-            )
-
         await session.commit()
         return log.id
+
+    async def upsert_incident(self, session: AsyncSession, incident: Incident) -> None:
+        """Persist the current aggregate instead of creating one row per event."""
+        existing = await session.scalar(
+            select(SecurityIncident).where(SecurityIncident.incident_key == incident.key)
+        )
+        if existing is None:
+            existing = SecurityIncident(
+                incident_key=incident.key,
+                guild_id=incident.guild_id,
+                actor_discord_id=incident.actor_id,
+                incident_type=incident.incident_type,
+                severity=incident.severity,
+                risk_score=incident.risk_score,
+                status="OPEN",
+                event_count=incident.event_count,
+                summary=incident.summary,
+            )
+            session.add(existing)
+        else:
+            existing.severity = incident.severity
+            existing.risk_score = incident.risk_score
+            existing.event_count = incident.event_count
+            existing.summary = incident.summary
+            if existing.status != "RESOLVED":
+                existing.status = "OPEN"
+        await session.commit()
