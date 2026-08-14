@@ -16,8 +16,9 @@ from app.database.session import SessionLocal
 from app.models.ai import AIThreatAssessment
 from app.models.security import SecurityConfig
 from app.security.audit import AuditLogCorrelator, event_from_audit_entry
+from app.security.decision_runtime import resolve_decision
 from app.security.events import Detection, EventCorrelator, SecurityEvent
-from app.security.lockdown import LockdownEngine, state_for_risk
+from app.security.lockdown import LockdownEngine
 from app.security.notifications import SecurityNotifier
 from app.security.persistence import SecurityPersistence
 from app.security.permissions.audit import PermissionAudit
@@ -362,56 +363,73 @@ class APXORClient(discord.Client):
             persisted_event_id = await self.security_persistence.record(session, detection)
             logger.info("Security event: guild=%s type=%s actor=%s target=%s risk=%d velocity=%d/%ss reason=%s", event.guild_id, event.event_type.value, event.actor_id, event.target_id, detection.signal.score, detection.velocity_count, detection.velocity_window_seconds, detection.signal.reason)
 
-            high_threshold = config.risk_threshold_high if config else 60
-            critical_threshold = config.risk_threshold_critical if config else 80
-            emergency_threshold = config.risk_threshold_emergency if config else 95
-            lockdown_threshold = critical_threshold
-            if event.protected_target and event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE, SecurityEventType.ROLE_UPDATE}:
-                lockdown_threshold = min(lockdown_threshold, high_threshold)
+            runtime = resolve_decision(detection, config)
+            decision = runtime.decision
+            logger.debug(
+                "Security decision: guild=%s state=%s severity=%s lockdown=%s recover=%s ai=%s risk=%d",
+                event.guild_id,
+                decision.state.value,
+                decision.severity,
+                decision.should_lockdown,
+                decision.should_recover,
+                decision.should_analyze_with_ai,
+                decision.risk_score,
+            )
 
-            if detection.signal.score >= high_threshold:
+            if decision.should_analyze_with_ai:
                 asyncio.create_task(self._run_ai_analysis(detection, persisted_event_id))
 
-            risk_state = state_for_risk(detection.signal.score)
-            await self.lockdown.set_protection_state(session, event.guild_id, risk_state, score=detection.signal.score)
+            await self.lockdown.set_protection_state(
+                session,
+                event.guild_id,
+                decision.state,
+                score=decision.risk_score,
+            )
 
-            if detection.signal.score >= lockdown_threshold and (config is None or config.lockdown_enabled):
-                actions = await self.lockdown.enter_lockdown(session, guild, actor_id=event.actor_id, event_log_id=persisted_event_id)
-                logger.critical("APXOR LOCKDOWN: guild=%s actor=%s risk=%d actions=%s", event.guild_id, event.actor_id, detection.signal.score, actions)
+            if decision.should_lockdown:
+                actions = await self.lockdown.enter_lockdown(
+                    session,
+                    guild,
+                    actor_id=event.actor_id,
+                    event_log_id=persisted_event_id,
+                )
+                logger.critical(
+                    "APXOR LOCKDOWN: guild=%s actor=%s risk=%d actions=%s",
+                    event.guild_id,
+                    event.actor_id,
+                    decision.risk_score,
+                    actions,
+                )
 
-            severity = None
-            if detection.signal.score >= emergency_threshold:
-                severity = "EMERGENCY"
-            elif detection.signal.score >= critical_threshold:
-                severity = "CRITICAL"
-            elif detection.signal.score >= high_threshold:
-                severity = "HIGH"
-
-            if severity is not None:
+            if decision.severity is not None:
                 await self.notifier.notify(
                     session,
                     guild,
-                    severity=severity,
+                    severity=decision.severity,
                     event_type=event.event_type.value,
                     actor_id=event.actor_id,
                     target_id=event.target_id,
-                    risk_score=detection.signal.score,
+                    risk_score=decision.risk_score,
                     reason=detection.signal.reason,
                     owner_dm_enabled=config.owner_dm_enabled if config else True,
                     notification_enabled=config.notification_enabled if config else True,
                 )
 
-            if (config is None or config.recovery_enabled) and event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE} and detection.signal.score >= high_threshold:
-                resource_type = "CHANNEL" if event.event_type == SecurityEventType.CHANNEL_DELETE else "ROLE"
-                priority = 10 if event.protected_target else 50
+            if decision.should_recover:
                 queued = await self.recovery_orchestrator.enqueue(
                     guild_id=event.guild_id,
-                    resource_type=resource_type,
+                    resource_type=decision.recovery_resource_type or "UNKNOWN",
                     resource_id=event.target_id or 0,
-                    reason=f"Automatic recovery after {event.event_type.value}; risk={detection.signal.score}; actor={event.actor_id}",
-                    priority=priority,
+                    reason=f"Automatic recovery after {event.event_type.value}; risk={decision.risk_score}; actor={event.actor_id}",
+                    priority=decision.recovery_priority or 50,
                 )
                 if not queued:
-                    logger.critical("RECOVERY QUEUE REJECTED: guild=%s resource=%s/%s risk=%s", event.guild_id, resource_type, event.target_id, detection.signal.score)
+                    logger.critical(
+                        "RECOVERY QUEUE REJECTED: guild=%s resource=%s/%s risk=%s",
+                        event.guild_id,
+                        decision.recovery_resource_type,
+                        event.target_id,
+                        decision.risk_score,
+                    )
 
             return detection
