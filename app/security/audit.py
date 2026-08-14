@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
 
 import discord
 
@@ -33,7 +32,8 @@ _ACTIONS: dict[SecurityEventType, tuple[discord.AuditLogAction, ...]] = {
 # dynamically so APXOR remains compatible with discord.py versions that expose
 # a subset of newer audit action enum members.
 _OPTIONAL_ACTION_NAMES: dict[SecurityEventType, tuple[str, ...]] = {
-    SecurityEventType.MEMBER_REMOVE: ("kick", "ban", "unban"),
+    SecurityEventType.MEMBER_UPDATE: ("member_update", "member_role_update"),
+    SecurityEventType.MEMBER_REMOVE: ("member_kick", "member_ban_add", "member_ban_remove"),
     SecurityEventType.WEBHOOK_UPDATE: ("webhook_create", "webhook_update", "webhook_delete"),
     SecurityEventType.INTEGRATION_UPDATE: ("integration_create", "integration_update", "integration_delete"),
 }
@@ -70,28 +70,22 @@ class AuditLogCorrelator:
         # Fetch a bounded recent window once, then match against the known event
         # target/action locally.
         try:
-            entries: list[discord.AuditLogEntry] = []
             async for entry in guild.audit_logs(limit=self.limit):
                 if entry.action not in actions:
                     continue
                 if not self._target_matches(entry, event):
                     continue
-                entries.append(entry)
-                # The API is newest-first. The first target/action match is the
-                # strongest attribution candidate.
-                break
-            if not entries:
-                return None
-            entry = entries[0]
-            return AuditMatch(
-                audit_log_id=entry.id,
-                actor_id=entry.user.id if entry.user is not None else None,
-                action=str(entry.action),
-            )
+                return AuditMatch(
+                    audit_log_id=entry.id,
+                    actor_id=entry.user.id if entry.user is not None else None,
+                    action=str(entry.action),
+                )
         except (discord.Forbidden, discord.HTTPException):
             # Missing VIEW_AUDIT_LOG or a transient Discord API failure must not
             # disable the deterministic Gateway detector.
             return None
+
+        return None
 
     @staticmethod
     def _target_matches(entry: discord.AuditLogEntry, event: SecurityEvent) -> bool:
