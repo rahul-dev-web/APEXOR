@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~66% of the backend security MVP architecture is now implemented.**
+**Overall: ~70% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -25,6 +25,11 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Conservative privileged-permission auditing
 - Idempotent guild auto-setup: APXOR security role, security category, alert/critical/audit/recovery channels, protected-resource registration, and initial `PROTECTED` state
 - Server-side capability authorization foundation: owner authority, guild-scoped grants, expiry support, grant/revoke rules, and database uniqueness constraints
+- **Authorized APXOR slash-command layer** with server-side capability checks
+- **Security capability management commands** for owner/security operators to grant and revoke APXOR capabilities
+- **Channel operations** (`/channel create`, `/channel delete`) routed through APXOR authorization
+- **Role operations** (`/role create`, `/role delete`) routed through APXOR authorization and Discord hierarchy checks
+- **Security status command** (`/security status`) with guild protection state and score
 - **Versioned Discord security snapshots** for guilds, roles, and channels, including permission overwrites and recoverable channel/role metadata
 - **Event-driven snapshot capture** before deletes/updates and after safe creates/updates
 - **Snapshot-based recovery engine** with auditable recovery actions and idempotent existing-resource checks
@@ -32,13 +37,13 @@ This is an engineering progress estimate, not a claim that the bot is production
 - **Automatic recovery trigger** for high-risk channel/role deletion events
 - **Configuration-driven anti-nuke enforcement** honoring per-guild enable/disable flags and high/critical/emergency risk thresholds
 - **Protected security alert delivery** to the APXOR critical channel and, for critical/emergency incidents, the guild owner via DM when enabled
-- **Recovery/lockdown feature flags** are now enforced by the event pipeline
-- **Recovery orchestrator unit tests** covering priority ordering and lifecycle behavior
+- **Recovery/lockdown feature flags** are enforced by the event pipeline
+- Recovery orchestrator unit tests covering priority ordering and lifecycle behavior
 - Docker image + pytest smoke/security-core tests
 
 ### Not yet implemented
 
-- APXOR slash-command authorization wiring (`/channel`, `/role`, moderation commands)
+- Complete APXOR command coverage for role editing, channel editing, moderation, snapshots, recovery, and configuration
 - Complete Discord permission isolation/enforcement policy
 - Complete Gateway audit-event coverage and robust actor correlation
 - Multi-resource recovery dependency ordering (category → channel → permissions)
@@ -108,6 +113,22 @@ When APXOR connects to a guild (or joins one), it attempts an idempotent securit
 
 APXOR must still be invited with the Discord permissions required for the operations it is expected to perform, and its role must be high enough in the guild hierarchy to manage the resources it owns.
 
+## Capability authorization and commands
+
+APXOR capabilities are server-side permissions independent of Discord role names. The current command layer exposes:
+
+- `/security status`
+- `/security grant`
+- `/security revoke`
+- `/channel create`
+- `/channel delete`
+- `/role create`
+- `/role delete`
+
+The owner is the root authority. Non-owners need an explicit, enabled, non-expired capability grant. `/security grant` and `/security revoke` require `SECURITY_MANAGE`, so delegation remains server-side and auditable. Destructive commands additionally require explicit confirmation and Discord role/channel hierarchy checks.
+
+The command tree is synchronized per guild on startup/join so development and newly joined servers receive commands without waiting for global command propagation.
+
 ## Snapshot and recovery model
 
 Snapshots are immutable versions keyed by resource identity. The event pipeline deliberately snapshots the **known-good state before updates/deletes**. Safe updates then advance the snapshot to the new state. Suspicious updates do not replace the known-good recovery source with the potentially malicious state.
@@ -123,19 +144,6 @@ Recovery reconstructs state by creating a replacement Discord resource. It does 
 
 High-risk role/channel deletion events are placed onto the priority recovery queue. Protected resources receive higher recovery priority. The current queue is intentionally in-memory for the MVP so the security boundary remains simple; it can later be backed by Redis or Render queue infrastructure.
 
-## Capability authorization
-
-APXOR capabilities are server-side permissions independent of Discord role names. The authorization service currently supports:
-
-- owner bypass based on the persisted guild owner ID
-- explicit guild-scoped user grants
-- capability expiry timestamps
-- deterministic grant/revoke checks
-- `SECURITY_MANAGE` delegation for non-owner security operators
-- database uniqueness to prevent duplicate active grants
-
-The next step is wiring these gates into actual APXOR slash commands and dashboard APIs. The browser/UI must never be treated as the authorization boundary.
-
 ## Security principles
 
 1. Discord permissions are the first security boundary.
@@ -150,6 +158,7 @@ The next step is wiring these gates into actual APXOR slash commands and dashboa
 10. Recovery is queued and bounded instead of issuing uncontrolled concurrent Discord REST mutations.
 11. Per-guild risk thresholds and feature flags are authoritative for runtime security decisions.
 12. Critical/emergency notifications use protected APXOR channels and owner DM escalation when configured.
+13. APXOR-controlled destructive operations require explicit capability authorization and confirmation.
 
 ## Roadmap
 
@@ -158,7 +167,7 @@ The next step is wiring these gates into actual APXOR slash commands and dashboa
 3. Database — **implemented**
 4. Auto Setup — **implemented**
 5. Permission Auditor — **foundation implemented**
-6. Capability Authorization — **foundation implemented; command/API wiring next**
+6. Capability Authorization — **command wiring implemented; complete command coverage next**
 7. Anti-Nuke Detection — **foundation implemented; configuration/notification hardening implemented; behavior hardening next**
 8. Audit Correlation — **foundation implemented; hardening next**
 9. Snapshots — **event-driven MVP implemented; reconciliation next**
