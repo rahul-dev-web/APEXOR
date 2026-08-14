@@ -4,16 +4,17 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~86% of the backend security MVP architecture is now implemented.**
+**Overall: ~90% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
 ### Implemented
 
 - FastAPI API foundation + health endpoint
+- Authenticated dashboard security API (service-to-service API key for MVP)
 - Discord Gateway monitoring for guild, role, channel, audit-log, webhook and integration activity
 - SQLAlchemy 2.x async PostgreSQL support with Supabase-compatible configuration
-- Alembic migrations through `0006_ai_threat_assessments`
+- Alembic migrations with a single merged head after Phase 1 parallel migration work
 - Guild/security configuration persistence
 - Deterministic event normalization, duplicate suppression and short-window velocity correlation
 - Deterministic privilege-escalation scoring: `ADMINISTRATOR` reaches emergency risk without AI
@@ -22,7 +23,8 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Conservative permission auditing and explicit permission enforcement with five-minute reconciliation
 - Idempotent guild auto-setup with protected APXOR security resources
 - Server-side capability authorization with owner authority, guild-scoped grants and expiry support
-- Authorized APXOR slash commands for security, channel and role management
+- Authorized APXOR slash commands for security, channel, role and moderation management
+- Read-only `/ai status` and `/ai incident` commands backed by persisted advisory assessments
 - Versioned Discord snapshots and dependency-aware, priority-aware, rate-limit-aware recovery
 - Automatic recovery for high-risk channel/role deletion
 - Deterministic incident aggregation in the persistence layer with short correlation windows and severity escalation
@@ -30,20 +32,20 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Advisory Groq threat analysis with strict structured output, input hashing and asynchronous execution
 - Persistent `ai_threat_assessments` audit records for AI analysis
 - AI failure isolation: Groq cannot block deterministic detection, lockdown, notification or recovery
-- Security-core, permission, audit, AI and privilege-escalation unit tests
+- Security-core, permission, audit, AI, privilege-escalation and dashboard-auth unit tests
 - Docker image + GitHub Actions compile/test workflow
 
 ### Not yet implemented
 
 - Complete APXOR command coverage for advanced editing, moderation, snapshots, recovery and configuration
+- `/ai ask` conversational security analyst and dedicated AI channel
 - Role-member assignment restoration and broader Discord resource recovery verification
 - Full emergency lockdown state machine beyond the current containment primitive
-- `/ai` command and dedicated AI channel
-- Dashboard API
-- Dashboard frontend
+- Dashboard end-user authentication/session layer and frontend
 - Production external queue / worker separation
 - Reconciliation hardening for all eventually-consistent Discord audit/resource cases
 - Full Discord integration/chaos test suite
+- Production observability, alerting and deployment verification
 
 ## Local setup
 
@@ -66,12 +68,19 @@ DISCORD_TOKEN=your_discord_bot_token
 DATABASE_URL=your_postgresql_connection_string
 GROQ_API_KEY=your_groq_api_key
 GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
+DASHBOARD_API_KEY=your-dashboard-service-secret
 ```
 
 Run the API:
 
 ```bash
 uvicorn app.main:app --reload
+```
+
+Run the Discord worker:
+
+```bash
+python -m app.bot.runner
 ```
 
 Run tests:
@@ -85,6 +94,24 @@ Run migrations:
 ```bash
 alembic upgrade head
 ```
+
+## Dashboard API
+
+The backend now exposes read-only security data for a future dashboard frontend. The MVP uses a server-side `DASHBOARD_API_KEY` and expects it in the `X-APXOR-Dashboard-Key` header.
+
+Endpoints:
+
+```text
+GET /api/dashboard/health
+GET /api/dashboard/guilds/{guild_id}/security
+GET /api/dashboard/guilds/{guild_id}/incidents
+GET /api/dashboard/guilds/{guild_id}/events
+GET /api/dashboard/guilds/{guild_id}/ai
+GET /api/dashboard/guilds/{guild_id}/recovery
+GET /api/dashboard/guilds/{guild_id}/snapshots
+```
+
+This is intentionally service-level authentication only. A browser-facing OAuth/session model is a separate dashboard phase and should not be replaced by exposing the service secret to untrusted clients.
 
 ## Security architecture
 
@@ -158,7 +185,7 @@ The security pipeline launches AI analysis asynchronously after deterministic ev
 
 1. Foundation — **implemented**
 2. Discord Gateway — **implemented; reconciliation hardening next**
-3. Database — **implemented**
+3. Database — **implemented; migration heads merged**
 4. Auto Setup — **implemented**
 5. Permission Auditor — **implemented; policy expansion next**
 6. Capability Authorization — **implemented; command coverage expanding**
@@ -169,7 +196,7 @@ The security pipeline launches AI analysis asynchronously after deterministic ev
 11. Lockdown — **containment primitive implemented; full state machine next**
 12. Incident Engine — **implemented; richer incident lifecycle next**
 13. Groq Threat Analyst — **runtime + persistence implemented**
-14. `/ai` — **next**
-15. Dashboard API — **next**
+14. `/ai` — **status + incident implemented; conversational interface next**
+15. Dashboard API — **read-only security API implemented; end-user auth next**
 16. Dashboard frontend — **next**
 17. Production/chaos testing — **next**
