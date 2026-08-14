@@ -1,13 +1,11 @@
-import pytest
-
-from app.core.constants import ProtectionState
+from app.core.constants import ProtectionState, SecurityEventType
 from app.security.events import Detection, SecurityEvent
 from app.security.protection_runtime import ProtectionRuntime
 from app.security.risk import RiskSignal
 
 
 def detection(score: int) -> Detection:
-    event = SecurityEvent(guild_id=1, event_type=next(iter(()), None))
+    event = SecurityEvent(guild_id=1, event_type=SecurityEventType.CHANNEL_DELETE)
     return Detection(
         event=event,
         signal=RiskSignal(score=score, reason="test"),
