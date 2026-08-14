@@ -10,6 +10,7 @@ from app.models.security import SecurityConfig
 from app.security.audit import AuditLogCorrelator
 from app.security.events import Detection, EventCorrelator, SecurityEvent
 from app.security.lockdown import LockdownEngine
+from app.security.notifications import SecurityNotifier
 from app.security.persistence import SecurityPersistence
 from app.security.permissions.audit import PermissionAudit
 from app.security.protected import ProtectedResourceService
@@ -33,6 +34,7 @@ class APXORClient(discord.Client):
         self.security_persistence = SecurityPersistence()
         self.protected_resources = ProtectedResourceService()
         self.lockdown = LockdownEngine()
+        self.notifier = SecurityNotifier()
         self.auto_setup = GuildAutoSetup()
         self.snapshots = SnapshotService()
         self.recovery_orchestrator = RecoveryOrchestrator()
@@ -152,52 +154,85 @@ class APXORClient(discord.Client):
             return None
 
     async def _process_security_event(self, event: SecurityEvent, guild: discord.Guild) -> Detection | None:
-        """Correlate, enrich, score, persist, contain, and recover a security event."""
-        match = await self.audit_correlator.correlate(guild, event)
-        if match is not None:
-            event = SecurityEvent(guild_id=event.guild_id, event_type=event.event_type, target_id=event.target_id, actor_id=match.actor_id, protected_target=event.protected_target, audit_log_id=match.audit_log_id, event_id=event.event_id, timestamp=event.timestamp)
-            logger.info("Audit correlation: guild=%s audit=%s actor=%s action=%s target=%s", event.guild_id, match.audit_log_id, match.actor_id, match.action, event.target_id)
-
-        if SessionLocal is not None and event.target_id is not None:
-            try:
-                async with SessionLocal() as session:
-                    protected = await self.protected_resources.is_protected_target(session, guild_id=event.guild_id, target_id=event.target_id, event_type=event.event_type.value)
-                if protected and not event.protected_target:
-                    event = SecurityEvent(guild_id=event.guild_id, event_type=event.event_type, target_id=event.target_id, actor_id=event.actor_id, protected_target=True, audit_log_id=event.audit_log_id, event_id=event.event_id, timestamp=event.timestamp)
-            except Exception:
-                logger.exception("Protected-resource lookup failed: guild=%s target=%s", guild.id, event.target_id)
-
-        detection = self.event_correlator.process(event)
-        if detection.velocity_count == 0:
-            logger.debug("Duplicate security event suppressed: %s", event.fingerprint)
+        """Correlate, enrich, score, persist, contain, notify, and recover an event."""
+        if SessionLocal is None:
+            logger.warning("Security event skipped because database is not configured: guild=%s", event.guild_id)
             return None
 
-        event_log_id = await self._persist_detection(detection)
-        logger.info("Security event: guild=%s type=%s actor=%s target=%s risk=%d velocity=%d/%ss reason=%s", event.guild_id, event.event_type.value, event.actor_id, event.target_id, detection.signal.score, detection.velocity_count, detection.velocity_window_seconds, detection.signal.reason)
+        async with SessionLocal() as session:
+            config = await session.scalar(select(SecurityConfig).where(SecurityConfig.guild_id == event.guild_id))
+            if config is not None and not config.anti_nuke_enabled:
+                return None
 
-        should_lockdown = detection.signal.score >= 80 or (event.protected_target and event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE, SecurityEventType.ROLE_UPDATE} and detection.signal.score >= 60)
-        if should_lockdown and SessionLocal is not None:
-            try:
-                async with SessionLocal() as session:
-                    config = await session.scalar(select(SecurityConfig).where(SecurityConfig.guild_id == event.guild_id))
-                    if config is None or config.lockdown_enabled:
-                        actions = await self.lockdown.enter_lockdown(session, guild, actor_id=event.actor_id, event_log_id=event_log_id)
-                        logger.critical("APXOR LOCKDOWN: guild=%s actor=%s risk=%d actions=%s", event.guild_id, event.actor_id, detection.signal.score, actions)
-            except Exception:
-                logger.exception("Lockdown execution failed: guild=%s", event.guild_id)
+            match = await self.audit_correlator.correlate(guild, event) if config is None or config.audit_correlation_enabled else None
+            if match is not None:
+                event = SecurityEvent(guild_id=event.guild_id, event_type=event.event_type, target_id=event.target_id, actor_id=match.actor_id, protected_target=event.protected_target, audit_log_id=match.audit_log_id, event_id=event.event_id, timestamp=event.timestamp)
+                logger.info("Audit correlation: guild=%s audit=%s actor=%s action=%s target=%s", event.guild_id, match.audit_log_id, match.actor_id, match.action, event.target_id)
 
-        if event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE} and detection.signal.score >= 60:
-            resource_type = "CHANNEL" if event.event_type == SecurityEventType.CHANNEL_DELETE else "ROLE"
-            priority = 10 if event.protected_target else 50
-            queued = await self.recovery_orchestrator.enqueue(guild_id=event.guild_id, resource_type=resource_type, resource_id=event.target_id or 0, reason=f"Automatic recovery after {event.event_type.value}; risk={detection.signal.score}; actor={event.actor_id}", priority=priority)
-            if not queued:
-                logger.critical("RECOVERY QUEUE REJECTED: guild=%s resource=%s/%s risk=%s", event.guild_id, resource_type, event.target_id, detection.signal.score)
+            if event.target_id is not None:
+                protected = await self.protected_resources.is_protected_target(session, guild_id=event.guild_id, target_id=event.target_id, event_type=event.event_type.value)
+                if protected and not event.protected_target:
+                    event = SecurityEvent(guild_id=event.guild_id, event_type=event.event_type, target_id=event.target_id, actor_id=event.actor_id, protected_target=True, audit_log_id=event.audit_log_id, event_id=event.event_id, timestamp=event.timestamp)
 
-        if detection.signal.score >= 80:
-            logger.critical("CRITICAL security pattern detected: guild=%s actor=%s type=%s target=%s risk=%d", event.guild_id, event.actor_id, event.event_type.value, event.target_id, detection.signal.score)
-        elif detection.signal.score >= 60:
-            logger.warning("HIGH security pattern detected: guild=%s actor=%s type=%s target=%s risk=%d", event.guild_id, event.actor_id, event.event_type.value, event.target_id, detection.signal.score)
-        return detection
+            detection = self.event_correlator.process(event)
+            if detection.velocity_count == 0:
+                logger.debug("Duplicate security event suppressed: %s", event.fingerprint)
+                return None
+
+            event_log_id = await self.security_persistence.ensure_guild(session, event.guild_id, name=guild.name, owner_id=guild.owner_id)
+            del event_log_id
+            persisted_event_id = await self.security_persistence.record(session, detection)
+            logger.info("Security event: guild=%s type=%s actor=%s target=%s risk=%d velocity=%d/%ss reason=%s", event.guild_id, event.event_type.value, event.actor_id, event.target_id, detection.signal.score, detection.velocity_count, detection.velocity_window_seconds, detection.signal.reason)
+
+            high_threshold = config.risk_threshold_high if config else 60
+            critical_threshold = config.risk_threshold_critical if config else 80
+            emergency_threshold = config.risk_threshold_emergency if config else 95
+            lockdown_threshold = critical_threshold
+            if event.protected_target and event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE, SecurityEventType.ROLE_UPDATE}:
+                lockdown_threshold = min(lockdown_threshold, high_threshold)
+
+            if detection.signal.score >= lockdown_threshold and (config is None or config.lockdown_enabled):
+                actions = await self.lockdown.enter_lockdown(session, guild, actor_id=event.actor_id, event_log_id=persisted_event_id)
+                logger.critical("APXOR LOCKDOWN: guild=%s actor=%s risk=%d actions=%s", event.guild_id, event.actor_id, detection.signal.score, actions)
+
+            severity = None
+            if detection.signal.score >= emergency_threshold:
+                severity = "EMERGENCY"
+            elif detection.signal.score >= critical_threshold:
+                severity = "CRITICAL"
+            elif detection.signal.score >= high_threshold:
+                severity = "HIGH"
+
+            if severity is not None:
+                await self.notifier.notify(
+                    session,
+                    guild,
+                    severity=severity,
+                    event_type=event.event_type.value,
+                    actor_id=event.actor_id,
+                    target_id=event.target_id,
+                    risk_score=detection.signal.score,
+                    reason=detection.signal.reason,
+                    owner_dm_enabled=config.owner_dm_enabled if config else True,
+                    notification_enabled=config.notification_enabled if config else True,
+                )
+
+            if (
+                config is None or config.recovery_enabled
+            ) and event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE} and detection.signal.score >= high_threshold:
+                resource_type = "CHANNEL" if event.event_type == SecurityEventType.CHANNEL_DELETE else "ROLE"
+                priority = 10 if event.protected_target else 50
+                queued = await self.recovery_orchestrator.enqueue(
+                    guild_id=event.guild_id,
+                    resource_type=resource_type,
+                    resource_id=event.target_id or 0,
+                    reason=f"Automatic recovery after {event.event_type.value}; risk={detection.signal.score}; actor={event.actor_id}",
+                    priority=priority,
+                )
+                if not queued:
+                    logger.critical("RECOVERY QUEUE REJECTED: guild=%s resource=%s/%s risk=%s", event.guild_id, resource_type, event.target_id, detection.signal.score)
+
+            return detection
 
     def _log_permission_findings(self, guild: discord.Guild) -> None:
         for finding in self.permission_audit.audit_guild(guild):
