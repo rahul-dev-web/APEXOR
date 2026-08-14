@@ -9,6 +9,7 @@ from app.database.session import SessionLocal
 from app.models.security import SecurityConfig
 from app.security.audit import AuditLogCorrelator
 from app.security.events import Detection, EventCorrelator, SecurityEvent
+from app.security.incidents import IncidentAggregator
 from app.security.lockdown import LockdownEngine
 from app.security.persistence import SecurityPersistence
 from app.security.permissions.audit import PermissionAudit
@@ -29,6 +30,7 @@ class APXORClient(discord.Client):
         super().__init__(intents=intents)
         self.permission_audit = PermissionAudit()
         self.event_correlator = EventCorrelator(window_seconds=10.0)
+        self.incident_aggregator = IncidentAggregator(window_seconds=15.0)
         self.audit_correlator = AuditLogCorrelator(limit=10)
         self.security_persistence = SecurityPersistence()
         self.protected_resources = ProtectedResourceService()
@@ -151,8 +153,17 @@ class APXORClient(discord.Client):
             logger.exception("Security persistence failed; detection remains in-memory: guild=%s fingerprint=%s", detection.event.guild_id, detection.event.fingerprint)
             return None
 
+    async def _persist_incident(self, incident) -> None:
+        if SessionLocal is None:
+            return
+        try:
+            async with SessionLocal() as session:
+                await self.security_persistence.upsert_incident(session, incident)
+        except Exception:
+            logger.exception("Incident persistence failed; aggregate remains in-memory: key=%s", incident.key)
+
     async def _process_security_event(self, event: SecurityEvent, guild: discord.Guild) -> Detection | None:
-        """Correlate, enrich, score, persist, contain, and recover a security event."""
+        """Correlate, enrich, score, aggregate, persist, contain, and recover a security event."""
         match = await self.audit_correlator.correlate(guild, event)
         if match is not None:
             event = SecurityEvent(guild_id=event.guild_id, event_type=event.event_type, target_id=event.target_id, actor_id=match.actor_id, protected_target=event.protected_target, audit_log_id=match.audit_log_id, event_id=event.event_id, timestamp=event.timestamp)
@@ -173,6 +184,11 @@ class APXORClient(discord.Client):
             return None
 
         event_log_id = await self._persist_detection(detection)
+        incident = self.incident_aggregator.ingest(detection)
+        if incident is not None:
+            await self._persist_incident(incident)
+            logger.warning("Security incident: key=%s type=%s actor=%s severity=%s risk=%d events=%d", incident.key, incident.incident_type, incident.actor_id, incident.severity, incident.risk_score, incident.event_count)
+
         logger.info("Security event: guild=%s type=%s actor=%s target=%s risk=%d velocity=%d/%ss reason=%s", event.guild_id, event.event_type.value, event.actor_id, event.target_id, detection.signal.score, detection.velocity_count, detection.velocity_window_seconds, detection.signal.reason)
 
         should_lockdown = detection.signal.score >= 80 or (event.protected_target and event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE, SecurityEventType.ROLE_UPDATE} and detection.signal.score >= 60)
