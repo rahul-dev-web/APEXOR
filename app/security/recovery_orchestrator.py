@@ -3,10 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import discord
+from sqlalchemy import select
 
 from app.database.session import SessionLocal
+from app.models.events import SecurityIncident
+from app.security.persistence import incident_family
 from app.security.recovery import RecoveryEngine
 
 logger = logging.getLogger(__name__)
@@ -135,8 +139,6 @@ class RecoveryOrchestrator:
                 )
                 await asyncio.sleep(delay)
             except discord.HTTPException as exc:
-                # Retry transient 5xx responses, but do not blindly retry 4xx
-                # permission/validation failures that require a new decision.
                 if not 500 <= exc.status < 600 or attempt >= self._max_attempts:
                     raise
                 delay = min(2 ** (attempt - 1), self._retry_cap)
@@ -174,6 +176,14 @@ class RecoveryOrchestrator:
             return
 
         async with SessionLocal() as session:
+            incident = await self._find_recovery_incident(session, job)
+            if incident is not None:
+                incident.recovery_status = "IN_PROGRESS"
+                incident.recovery_started_at = incident.recovery_started_at or datetime.now(timezone.utc)
+                incident.updated_at = datetime.now(timezone.utc)
+                await session.flush()
+                await session.commit()
+
             action = await self._recovery.restore_resource(
                 session,
                 guild,
@@ -181,14 +191,41 @@ class RecoveryOrchestrator:
                 resource_id=job.resource_id,
                 reason=job.reason,
             )
+            now = datetime.now(timezone.utc)
+            if incident is not None:
+                if action.status == "VERIFIED":
+                    incident.recovery_status = "VERIFIED"
+                    incident.recovered_at = now
+                    incident.status = "RESOLVED"
+                    incident.resolved_at = now
+                elif action.status in {"FAILED", "VERIFICATION_FAILED"}:
+                    incident.recovery_status = "FAILED"
+                incident.updated_at = now
+                await session.commit()
+
             logger.info(
-                "Recovery completed: guild=%s resource=%s/%s status=%s restored=%s",
+                "Recovery completed: guild=%s resource=%s/%s status=%s restored=%s incident=%s",
                 job.guild_id,
                 job.resource_type,
                 job.resource_id,
                 action.status,
                 action.restored_resource_id,
+                incident.incident_key if incident is not None else None,
             )
+
+    @staticmethod
+    async def _find_recovery_incident(session, job: RecoveryJob) -> SecurityIncident | None:
+        family = "CHANNEL_NUKE" if job.resource_type == "CHANNEL" else "ROLE_NUKE"
+        return await session.scalar(
+            select(SecurityIncident)
+            .where(
+                SecurityIncident.guild_id == job.guild_id,
+                SecurityIncident.incident_type == family,
+                SecurityIncident.status == "OPEN",
+            )
+            .order_by(SecurityIncident.created_at.desc())
+            .limit(1)
+        )
 
 
 # Injected by APXORClient at startup. Keeping the orchestrator independent from
