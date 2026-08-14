@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~91% of the backend security MVP architecture is now implemented.**
+**Overall: ~92% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -33,8 +33,10 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Persistent `ai_threat_assessments` audit records for AI analysis
 - AI failure isolation: Groq cannot block deterministic detection, lockdown, notification or recovery
 - Deterministic security decision kernel separating event risk from enforcement policy
-- Decision kernel wired into the Discord security event path as the single enforcement-policy boundary
-- Security-core, permission, audit, AI, privilege-escalation, decision-kernel and dashboard-auth unit tests
+- Explicit protection state machine with recovery success/failure/degraded transitions
+- `ProtectionRuntime` wired into the Discord Gateway event path as the lifecycle policy boundary
+- Protected-resource containment correctly persists `LOCKDOWN` even when the raw risk band is lower
+- Security-core, permission, audit, AI, privilege-escalation, decision-kernel, protection-runtime and dashboard-auth unit tests
 - Docker image + GitHub Actions compile/test workflow
 
 ### Not yet implemented
@@ -42,7 +44,7 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Complete APXOR command coverage for advanced editing, moderation, snapshots, recovery and configuration
 - `/ai ask` conversational security analyst and dedicated AI channel
 - Role-member assignment restoration and broader Discord resource recovery verification
-- Full emergency lockdown state machine beyond the current containment primitive
+- Full recovery lifecycle orchestration through the protection state machine
 - Dashboard end-user authentication/session layer and frontend
 - Production external queue / worker separation
 - Reconciliation hardening for all eventually-consistent Discord audit/resource cases
@@ -134,6 +136,9 @@ Discord Gateway + Audit Logs
             v
    Deterministic Decision Kernel
             |
+            v
+      Protection Runtime
+            |
       +-----+-----+
       |           |
       v           v
@@ -180,6 +185,20 @@ High-risk events are grouped into short-lived incidents by guild, actor and atta
 
 Recovery is single-worker, priority-aware and rate-limit-aware. Protected security resources receive higher priority.
 
+## Protection state lifecycle
+
+The protection lifecycle is explicit and deterministic:
+
+```text
+INITIALIZING -> PROTECTED
+PROTECTED -> SUSPICIOUS -> HIGH_RISK -> LOCKDOWN
+HIGH_RISK/LOCKDOWN -> RECOVERING
+RECOVERING -> PROTECTED | DEGRADED | RECOVERY_FAILED
+RECOVERY_FAILED -> RECOVERING | LOCKDOWN | DEGRADED
+```
+
+A later low-risk event cannot silently clear active `LOCKDOWN`, `RECOVERING`, or `RECOVERY_FAILED` states. Protected-resource containment can enter `LOCKDOWN` even when the ordinary risk band would otherwise be `SUSPICIOUS`.
+
 ## AI security boundary
 
 The Groq threat analyst receives normalized security context only. Its output is schema-constrained and persisted for auditability. AI recommendations are advisory and are never executed as arbitrary Discord operations.
@@ -198,7 +217,7 @@ The security pipeline launches AI analysis asynchronously after deterministic ev
 8. Audit Correlation — **real-time Gateway + REST fallback implemented; reconciliation hardening next**
 9. Snapshots — **implemented; broader resource coverage next**
 10. Recovery — **dependency/rate-limit/priority MVP implemented; verification expansion next**
-11. Lockdown — **containment primitive implemented; full state machine next**
+11. Lockdown — **deterministic state machine + Gateway runtime integration implemented; full recovery lifecycle next**
 12. Incident Engine — **implemented; richer incident lifecycle next**
 13. Groq Threat Analyst — **runtime + persistence implemented**
 14. `/ai` — **status + incident implemented; conversational interface next**
