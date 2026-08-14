@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~90% of the backend security MVP architecture is now implemented.**
+**Overall: ~91% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -33,12 +33,12 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Persistent `ai_threat_assessments` audit records for AI analysis
 - AI failure isolation: Groq cannot block deterministic detection, lockdown, notification or recovery
 - Deterministic security decision kernel separating event risk from enforcement policy
+- Decision kernel wired into the Discord security event path as the single enforcement-policy boundary
 - Security-core, permission, audit, AI, privilege-escalation, decision-kernel and dashboard-auth unit tests
 - Docker image + GitHub Actions compile/test workflow
 
 ### Not yet implemented
 
-- Wire the decision kernel into every Gateway event path and remove duplicated policy logic from the Discord client
 - Complete APXOR command coverage for advanced editing, moderation, snapshots, recovery and configuration
 - `/ai ask` conversational security analyst and dedicated AI channel
 - Role-member assignment restoration and broader Discord resource recovery verification
