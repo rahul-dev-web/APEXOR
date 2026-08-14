@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import ProtectionState
 from app.models.guild import Guild
 from app.models.security import SecurityChannel, SecurityConfig, SecurityRole
+from app.security.snapshots import SnapshotService
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,9 @@ class GuildAutoSetup:
         ("apxor-audit", "AUDIT"),
         ("apxor-recovery", "RECOVERY"),
     )
+
+    def __init__(self) -> None:
+        self.snapshots = SnapshotService()
 
     async def ensure(self, session: AsyncSession, guild: discord.Guild) -> bool:
         db_guild = await session.scalar(
@@ -66,6 +70,12 @@ class GuildAutoSetup:
         db_guild.owner_discord_id = guild.owner_id
         db_guild.name = guild.name
         db_guild.is_active = True
+
+        # Establish the first recoverable baseline only after APXOR's own
+        # security resources have been created and registered.
+        if config.snapshot_enabled:
+            await self.snapshots.capture_guild(session, guild, source="AUTO_SETUP")
+
         await session.commit()
         logger.info("APXOR auto-setup complete: guild=%s", guild.id)
         return True
