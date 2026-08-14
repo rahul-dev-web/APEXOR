@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-import logging
-
 import discord
 from discord import app_commands
+from sqlalchemy import select
 
 from app.core.constants import Capability
 from app.database.session import SessionLocal
+from app.models.guild import Guild
 from app.security.authorization import AuthorizationService
 
-logger = logging.getLogger(__name__)
+
 authorization = AuthorizationService()
+CAPABILITY_CHOICES = [app_commands.Choice(name=c.value, value=c.value) for c in Capability]
 
 
 async def _authorized(interaction: discord.Interaction, capability: Capability) -> bool:
@@ -35,7 +36,7 @@ async def _authorized(interaction: discord.Interaction, capability: Capability) 
 
 class SecurityGroup(app_commands.Group):
     def __init__(self) -> None:
-        super().__init__(name="security", description="Inspect APXOR security state")
+        super().__init__(name="security", description="Inspect and manage APXOR security")
 
     @app_commands.command(name="status", description="Show APXOR protection status for this server")
     async def status(self, interaction: discord.Interaction) -> None:
@@ -46,8 +47,6 @@ class SecurityGroup(app_commands.Group):
             await interaction.response.send_message("Database is unavailable.", ephemeral=True)
             return
         async with SessionLocal() as session:
-            from sqlalchemy import select
-            from app.models.guild import Guild
             guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == interaction.guild.id))
         if guild is None:
             await interaction.response.send_message("APXOR has not initialized this server yet.", ephemeral=True)
@@ -57,6 +56,63 @@ class SecurityGroup(app_commands.Group):
         embed.add_field(name="Score", value=f"{guild.protection_score}/100", inline=True)
         embed.add_field(name="Owner", value=f"<@{guild.owner_discord_id}>", inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="grant", description="Grant an APXOR capability to a member")
+    @app_commands.describe(member="Member receiving the capability", capability="Capability to grant")
+    @app_commands.choices(capability=CAPABILITY_CHOICES)
+    async def grant(self, interaction: discord.Interaction, member: discord.Member, capability: app_commands.Choice[str]) -> None:
+        if not await _authorized(interaction, Capability.SECURITY_MANAGE):
+            return
+        assert interaction.guild is not None
+        if SessionLocal is None:
+            await interaction.response.send_message("Database is unavailable.", ephemeral=True)
+            return
+        selected = Capability(capability.value)
+        async with SessionLocal() as session:
+            try:
+                await authorization.grant(
+                    session,
+                    guild_id=interaction.guild.id,
+                    discord_user_id=member.id,
+                    capability=selected,
+                    granted_by_discord_id=interaction.user.id,
+                )
+                await session.commit()
+            except (PermissionError, ValueError) as exc:
+                await session.rollback()
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+        await interaction.response.send_message(
+            f"Granted `{selected.value}` to {member.mention}.", ephemeral=True
+        )
+
+    @app_commands.command(name="revoke", description="Revoke an APXOR capability from a member")
+    @app_commands.describe(member="Member losing the capability", capability="Capability to revoke")
+    @app_commands.choices(capability=CAPABILITY_CHOICES)
+    async def revoke(self, interaction: discord.Interaction, member: discord.Member, capability: app_commands.Choice[str]) -> None:
+        if not await _authorized(interaction, Capability.SECURITY_MANAGE):
+            return
+        assert interaction.guild is not None
+        if SessionLocal is None:
+            await interaction.response.send_message("Database is unavailable.", ephemeral=True)
+            return
+        selected = Capability(capability.value)
+        async with SessionLocal() as session:
+            try:
+                changed = await authorization.revoke(
+                    session,
+                    guild_id=interaction.guild.id,
+                    discord_user_id=member.id,
+                    capability=selected,
+                    revoked_by_discord_id=interaction.user.id,
+                )
+                await session.commit()
+            except PermissionError as exc:
+                await session.rollback()
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+        message = f"Revoked `{selected.value}` from {member.mention}." if changed else "No active capability grant was found."
+        await interaction.response.send_message(message, ephemeral=True)
 
 
 class ChannelGroup(app_commands.Group):
@@ -111,7 +167,8 @@ class RoleGroup(app_commands.Group):
         if role.guild != interaction.guild:
             await interaction.response.send_message("That role is not in this server.", ephemeral=True)
             return
-        if interaction.guild is not None and role >= interaction.guild.me.top_role:
+        bot_member = interaction.guild.me
+        if bot_member is None or role >= bot_member.top_role:
             await interaction.response.send_message("APXOR cannot manage a role at or above its highest role.", ephemeral=True)
             return
         await role.delete(reason=f"APXOR authorized by {interaction.user.id}")
