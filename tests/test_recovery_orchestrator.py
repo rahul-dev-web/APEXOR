@@ -71,6 +71,8 @@ async def test_recovery_orchestrator_retries_rate_limited_jobs(monkeypatch: pyte
         if attempts == 1:
             raise FakeRateLimited(0.25)
 
+    orchestrator._execute = fake_execute  # type: ignore[method-assign]
+
     async def fake_sleep(delay: float) -> None:
         sleeps.append(delay)
 
