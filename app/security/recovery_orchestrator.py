@@ -22,7 +22,7 @@ class RecoveryJob:
 
 
 class RecoveryOrchestrator:
-    """Single-worker, priority-aware recovery queue.
+    """Single-worker, priority-aware, rate-limit-aware recovery queue.
 
     Detection stays on the Gateway callback path; Discord mutations happen here
     so a burst of destructive events cannot create uncontrolled concurrent REST
@@ -30,12 +30,23 @@ class RecoveryOrchestrator:
     replaced by Redis/Render queue infrastructure without changing callers.
     """
 
-    def __init__(self, *, max_queue_size: int = 512) -> None:
+    def __init__(
+        self,
+        *,
+        max_queue_size: int = 512,
+        max_attempts: int = 4,
+        recovery_spacing: float = 0.05,
+        retry_cap: float = 30.0,
+    ) -> None:
         self._queue: asyncio.PriorityQueue[tuple[int, int, RecoveryJob]] = asyncio.PriorityQueue(maxsize=max_queue_size)
         self._sequence = 0
         self._worker: asyncio.Task[None] | None = None
         self._stopping = False
         self._recovery = RecoveryEngine()
+        self._max_attempts = max(1, max_attempts)
+        self._recovery_spacing = max(0.0, recovery_spacing)
+        self._retry_cap = max(0.1, retry_cap)
+        self._last_request_at = 0.0
 
     async def start(self) -> None:
         if self._worker is None or self._worker.done():
@@ -88,7 +99,9 @@ class RecoveryOrchestrator:
         while True:
             _priority, _sequence, job = await self._queue.get()
             try:
-                await self._execute(job)
+                await self._execute_with_retry(job)
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.exception(
                     "Unhandled recovery job failure: guild=%s resource=%s/%s",
@@ -96,6 +109,60 @@ class RecoveryOrchestrator:
                 )
             finally:
                 self._queue.task_done()
+
+    async def _execute_with_retry(self, job: RecoveryJob) -> None:
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                await self._pace_recovery_requests()
+                await self._execute(job)
+                return
+            except discord.RateLimited as exc:
+                if attempt >= self._max_attempts:
+                    logger.error(
+                        "Recovery exhausted rate-limit retries: guild=%s resource=%s/%s",
+                        job.guild_id, job.resource_type, job.resource_id,
+                    )
+                    raise
+                delay = min(max(float(exc.retry_after), 0.0), self._retry_cap)
+                logger.warning(
+                    "Discord rate limit during recovery; retrying in %.2fs (attempt %s/%s): guild=%s resource=%s/%s",
+                    delay,
+                    attempt,
+                    self._max_attempts,
+                    job.guild_id,
+                    job.resource_type,
+                    job.resource_id,
+                )
+                await asyncio.sleep(delay)
+            except discord.HTTPException as exc:
+                # Retry transient 5xx responses, but do not blindly retry 4xx
+                # permission/validation failures that require a new decision.
+                if not 500 <= exc.status < 600 or attempt >= self._max_attempts:
+                    raise
+                delay = min(2 ** (attempt - 1), self._retry_cap)
+                logger.warning(
+                    "Transient Discord HTTP error during recovery; retrying in %.2fs (attempt %s/%s): status=%s guild=%s resource=%s/%s",
+                    delay,
+                    attempt,
+                    self._max_attempts,
+                    exc.status,
+                    job.guild_id,
+                    job.resource_type,
+                    job.resource_id,
+                )
+                await asyncio.sleep(delay)
+
+    async def _pace_recovery_requests(self) -> None:
+        if self._recovery_spacing <= 0:
+            self._last_request_at = asyncio.get_running_loop().time()
+            return
+
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        remaining = self._recovery_spacing - (now - self._last_request_at)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        self._last_request_at = loop.time()
 
     async def _execute(self, job: RecoveryJob) -> None:
         guild = _guild_from_client(job.guild_id)

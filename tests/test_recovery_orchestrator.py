@@ -51,3 +51,39 @@ async def test_recovery_orchestrator_stops_accepting_jobs_after_stop() -> None:
     )
 
     assert accepted is False
+
+
+@pytest.mark.asyncio
+async def test_recovery_orchestrator_retries_rate_limited_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeRateLimited(Exception):
+        def __init__(self, retry_after: float) -> None:
+            self.retry_after = retry_after
+
+    monkeypatch.setattr("app.security.recovery_orchestrator.discord.RateLimited", FakeRateLimited)
+
+    orchestrator = RecoveryOrchestrator(max_attempts=3, recovery_spacing=0, retry_cap=5)
+    attempts = 0
+    sleeps: list[float] = []
+
+    async def fake_execute(job: RecoveryJob) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise FakeRateLimited(0.25)
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr("app.security.recovery_orchestrator.asyncio.sleep", fake_sleep)
+
+    await orchestrator._execute_with_retry(
+        RecoveryJob(
+            guild_id=1,
+            resource_type="CHANNEL",
+            resource_id=101,
+            reason="rate-limit test",
+        )
+    )
+
+    assert attempts == 2
+    assert sleeps == [0.25]
