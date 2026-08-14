@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import discord
@@ -13,6 +14,7 @@ from app.security.lockdown import LockdownEngine
 from app.security.notifications import SecurityNotifier
 from app.security.persistence import SecurityPersistence
 from app.security.permissions.audit import PermissionAudit
+from app.security.permissions.enforcement import PermissionEnforcement
 from app.security.protected import ProtectedResourceService
 from app.security.recovery_orchestrator import RecoveryOrchestrator, bind_discord_client
 from app.security.setup import GuildAutoSetup
@@ -32,6 +34,7 @@ class APXORClient(discord.Client):
         self.tree = APXORCommandTree(self)
         self._commands_synced = False
         self.permission_audit = PermissionAudit()
+        self.permission_enforcement = PermissionEnforcement()
         self.event_correlator = EventCorrelator(window_seconds=10.0)
         self.audit_correlator = AuditLogCorrelator(limit=10)
         self.security_persistence = SecurityPersistence()
@@ -63,7 +66,7 @@ class APXORClient(discord.Client):
                     logger.exception("Failed to sync APXOR commands to guild=%s", guild.id)
             self._commands_synced = True
         for guild in self.guilds:
-            self._log_permission_findings(guild)
+            await self._audit_and_enforce_permissions(guild)
             await self._run_auto_setup(guild)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
@@ -72,13 +75,13 @@ class APXORClient(discord.Client):
             await self.tree.sync(guild=guild)
         except discord.HTTPException:
             logger.exception("Failed to sync APXOR commands to joined guild=%s", guild.id)
-        self._log_permission_findings(guild)
+        await self._audit_and_enforce_permissions(guild)
         await self._run_auto_setup(guild)
 
     async def on_guild_role_create(self, role: discord.Role) -> None:
         await self._capture_resource(role, "ROLE", source="EVENT_AFTER_CREATE")
         await self._process_security_event(SecurityEvent(guild_id=role.guild.id, event_type=SecurityEventType.ROLE_CREATE, target_id=role.id), role.guild)
-        self._log_permission_findings(role.guild)
+        await self._audit_and_enforce_permissions(role.guild)
 
     async def on_guild_role_update(self, before: discord.Role, after: discord.Role) -> None:
         await self._capture_resource(before, "ROLE", source="EVENT_BEFORE_UPDATE")
@@ -86,7 +89,7 @@ class APXORClient(discord.Client):
             logger.warning("Role permission change detected: guild=%s role=%s before=%s after=%s", after.guild.id, after.id, before.permissions.value, after.permissions.value)
         detection = await self._process_security_event(SecurityEvent(guild_id=after.guild.id, event_type=SecurityEventType.ROLE_UPDATE, target_id=after.id), after.guild)
         await self._capture_after_if_safe(after, "ROLE", detection)
-        self._log_permission_findings(after.guild)
+        await self._audit_and_enforce_permissions(after.guild, changed_role=after)
 
     async def on_guild_role_delete(self, role: discord.Role) -> None:
         await self._capture_resource(role, "ROLE", source="EVENT_BEFORE_DELETE")
@@ -123,9 +126,35 @@ class APXORClient(discord.Client):
             logger.exception("Snapshot capture failed: guild=%s resource=%s/%s source=%s", getattr(getattr(resource, "guild", resource), "id", "unknown"), resource_type, getattr(resource, "id", "unknown"), source)
 
     async def _capture_after_if_safe(self, resource, resource_type: str, detection: Detection | None) -> None:
-        """Advance snapshots only for non-suspicious updates."""
         if detection is None or detection.signal.score < 60:
             await self._capture_resource(resource, resource_type, source="EVENT_AFTER_SAFE_UPDATE")
+
+    async def _audit_and_enforce_permissions(self, guild: discord.Guild, *, changed_role: discord.Role | None = None) -> None:
+        findings = self.permission_audit.audit_guild(guild)
+        for finding in findings:
+            logger.warning("Privileged role detected: guild=%s role=%s name=%r severity=%s permissions=%s owner_role=%s", guild.id, finding.role_id, finding.role_name, finding.severity, ",".join(finding.permissions), finding.is_owner_role)
+
+        if SessionLocal is None:
+            return
+        try:
+            async with SessionLocal() as session:
+                config = await session.scalar(select(SecurityConfig).where(SecurityConfig.guild_id == guild.id))
+                if config is None or not config.permission_enforcement_enabled:
+                    return
+            if changed_role is not None:
+                action = await self.permission_enforcement.enforce_role(guild, changed_role, reason="APXOR automatic permission enforcement after role update")
+                if action.status == "ENFORCED":
+                    logger.critical("Permission enforcement: guild=%s role=%s removed=%s", guild.id, action.role_id, ",".join(action.removed_permissions))
+                elif action.status == "FAILED":
+                    logger.error("Permission enforcement failed: guild=%s role=%s reason=%s", guild.id, action.role_id, action.reason)
+                return
+            actions = await self.permission_enforcement.enforce_guild(guild, reason="APXOR permission posture reconciliation")
+            enforced = [a for a in actions if a.status == "ENFORCED"]
+            failed = [a for a in actions if a.status == "FAILED"]
+            if enforced or failed:
+                logger.warning("Permission reconciliation: guild=%s enforced=%d failed=%d", guild.id, len(enforced), len(failed))
+        except Exception:
+            logger.exception("Permission audit/enforcement failed for guild=%s", guild.id)
 
     async def _run_auto_setup(self, guild: discord.Guild) -> None:
         if SessionLocal is None:
@@ -169,7 +198,6 @@ class APXORClient(discord.Client):
             return None
 
     async def _process_security_event(self, event: SecurityEvent, guild: discord.Guild) -> Detection | None:
-        """Correlate, enrich, score, persist, contain, notify, and recover an event."""
         if SessionLocal is None:
             logger.warning("Security event skipped because database is not configured: guild=%s", event.guild_id)
             return None
@@ -219,37 +247,16 @@ class APXORClient(discord.Client):
                 severity = "HIGH"
 
             if severity is not None:
-                await self.notifier.notify(
-                    session,
-                    guild,
-                    severity=severity,
-                    event_type=event.event_type.value,
-                    actor_id=event.actor_id,
-                    target_id=event.target_id,
-                    risk_score=detection.signal.score,
-                    reason=detection.signal.reason,
-                    owner_dm_enabled=config.owner_dm_enabled if config else True,
-                    notification_enabled=config.notification_enabled if config else True,
-                )
+                await self.notifier.notify(session, guild, severity=severity, event_type=event.event_type.value, actor_id=event.actor_id, target_id=event.target_id, risk_score=detection.signal.score, reason=detection.signal.reason, owner_dm_enabled=config.owner_dm_enabled if config else True, notification_enabled=config.notification_enabled if config else True)
 
             if (config is None or config.recovery_enabled) and event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE} and detection.signal.score >= high_threshold:
                 resource_type = "CHANNEL" if event.event_type == SecurityEventType.CHANNEL_DELETE else "ROLE"
                 priority = 10 if event.protected_target else 50
-                queued = await self.recovery_orchestrator.enqueue(
-                    guild_id=event.guild_id,
-                    resource_type=resource_type,
-                    resource_id=event.target_id or 0,
-                    reason=f"Automatic recovery after {event.event_type.value}; risk={detection.signal.score}; actor={event.actor_id}",
-                    priority=priority,
-                )
+                queued = await self.recovery_orchestrator.enqueue(guild_id=event.guild_id, resource_type=resource_type, resource_id=event.target_id or 0, reason=f"Automatic recovery after {event.event_type.value}; risk={detection.signal.score}; actor={event.actor_id}", priority=priority)
                 if not queued:
                     logger.critical("RECOVERY QUEUE REJECTED: guild=%s resource=%s/%s risk=%s", event.guild_id, resource_type, event.target_id, detection.signal.score)
 
             return detection
-
-    def _log_permission_findings(self, guild: discord.Guild) -> None:
-        for finding in self.permission_audit.audit_guild(guild):
-            logger.warning("Privileged role detected: guild=%s role=%s name=%r severity=%s permissions=%s owner_role=%s", guild.id, finding.role_id, finding.role_name, finding.severity, ",".join(finding.permissions), finding.is_owner_role)
 
     async def start_bot(self) -> None:
         if not settings.discord_token:
