@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~55% of the backend security MVP architecture is now implemented.**
+**Overall: ~62% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -26,7 +26,11 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Idempotent guild auto-setup: APXOR security role, security category, alert/critical/audit/recovery channels, protected-resource registration, and initial `PROTECTED` state
 - Server-side capability authorization foundation: owner authority, guild-scoped grants, expiry support, grant/revoke rules, and database uniqueness constraints
 - **Versioned Discord security snapshots** for guilds, roles, and channels, including permission overwrites and recoverable channel/role metadata
-- **Snapshot-based recovery engine foundation** with auditable recovery actions and idempotent existing-resource checks
+- **Event-driven snapshot capture** before deletes/updates and after safe creates/updates
+- **Snapshot-based recovery engine** with auditable recovery actions and idempotent existing-resource checks
+- **Priority-aware recovery orchestrator** with a single worker, bounded queue, protected-resource priority, lifecycle management, and a replaceable queue boundary
+- **Automatic recovery trigger** for high-risk channel/role deletion events
+- **Recovery orchestrator unit tests** covering priority ordering and lifecycle behavior
 - Docker image + pytest smoke/security-core tests
 
 ### Not yet implemented
@@ -34,8 +38,7 @@ This is an engineering progress estimate, not a claim that the bot is production
 - APXOR slash-command authorization wiring (`/channel`, `/role`, moderation commands)
 - Complete Discord permission isolation/enforcement policy
 - Complete Gateway audit-event coverage and robust actor correlation
-- Event-driven snapshot refresh on every mutation/delete event
-- Full channel/role recovery orchestration, dependency ordering, and recovery queue
+- Multi-resource recovery dependency ordering (category → channel → permissions)
 - Role-member assignment restoration
 - Incident aggregation and owner notification delivery
 - Emergency lockdown state machine beyond the current containment primitive
@@ -43,7 +46,8 @@ This is an engineering progress estimate, not a claim that the bot is production
 - `/ai` command and AI channel
 - Dashboard API
 - Dashboard frontend
-- Production worker/queue separation
+- Production external queue / worker separation
+- Discord API rate-limit aware recovery backoff and verification hardening
 - Chaos/security integration test suite
 
 ## Local setup
@@ -103,7 +107,9 @@ APXOR must still be invited with the Discord permissions required for the operat
 
 ## Snapshot and recovery model
 
-Snapshots are immutable versions keyed by resource identity. The current implementation records:
+Snapshots are immutable versions keyed by resource identity. The event pipeline deliberately snapshots the **known-good state before updates/deletes**. Safe updates then advance the snapshot to the new state. Suspicious updates do not replace the known-good recovery source with the potentially malicious state.
+
+The current snapshot records:
 
 - guild security metadata
 - role names, permissions, position, colour, hoist and mentionable state
@@ -112,7 +118,7 @@ Snapshots are immutable versions keyed by resource identity. The current impleme
 
 Recovery reconstructs state by creating a replacement Discord resource. It does **not** claim to resurrect the original Discord ID or message history. Each recovery attempt is recorded in `recovery_actions` with its source snapshot, status and error state.
 
-The current baseline is captured during auto-setup. Event-driven refresh and ordered multi-resource recovery are the next hardening steps.
+High-risk role/channel deletion events are placed onto the priority recovery queue. Protected resources receive higher recovery priority. The current queue is intentionally in-memory for the MVP so the security boundary remains simple; it can later be backed by Redis or Render queue infrastructure.
 
 ## Capability authorization
 
@@ -133,10 +139,12 @@ The next step is wiring these gates into actual APXOR slash commands and dashboa
 2. AI is advisory, never the root of trust.
 3. Gateway events and audit-log correlation are complementary signals.
 4. Security actions must be deterministic and idempotent.
-5. Recovery reconstructs server state; it cannot resurrect deleted Discord IDs/history.
-6. APXOR reports measurable protection state instead of claiming 100% protection.
-7. Auto-setup is conservative and never silently strips user permissions.
-8. Dashboard/client input is untrusted; privileged operations require server-side authorization.
+5. Security snapshots preserve known-good state before potentially destructive mutations.
+6. Recovery reconstructs server state; it cannot resurrect deleted Discord IDs/history.
+7. APXOR reports measurable protection state instead of claiming 100% protection.
+8. Auto-setup is conservative and never silently strips user permissions.
+9. Dashboard/client input is untrusted; privileged operations require server-side authorization.
+10. Recovery is queued and bounded instead of issuing uncontrolled concurrent Discord REST mutations.
 
 ## Roadmap
 
@@ -148,8 +156,8 @@ The next step is wiring these gates into actual APXOR slash commands and dashboa
 6. Capability Authorization — **foundation implemented; command/API wiring next**
 7. Anti-Nuke Detection — **foundation implemented; hardening next**
 8. Audit Correlation — **foundation implemented; hardening next**
-9. Snapshots — **baseline implemented; event-driven refresh next**
-10. Recovery — **engine foundation implemented; orchestration next**
+9. Snapshots — **event-driven MVP implemented; reconciliation next**
+10. Recovery — **engine + priority orchestration implemented; dependency/rate-limit hardening next**
 11. Lockdown — **containment primitive implemented**
 12. Groq Threat Analyst — next
 13. Dashboard — next
