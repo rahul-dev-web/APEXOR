@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.events import SecurityEventLog, SecurityIncident
+from app.models.guild import Guild
 from app.security.events import Detection
 
 
@@ -28,6 +29,22 @@ def severity_for(score: int) -> str:
 
 class SecurityPersistence:
     """Persist normalized detections without making DB availability a security dependency."""
+
+    async def ensure_guild(self, session: AsyncSession, guild_id: int, *, name: str, owner_id: int) -> None:
+        guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == guild_id))
+        if guild is None:
+            session.add(
+                Guild(
+                    discord_guild_id=guild_id,
+                    name=name[:100],
+                    owner_discord_id=owner_id,
+                    protection_state="PROTECTED",
+                )
+            )
+            await session.flush()
+        else:
+            guild.name = name[:100]
+            guild.owner_discord_id = owner_id
 
     async def record(self, session: AsyncSession, detection: Detection) -> bool:
         event = detection.event
