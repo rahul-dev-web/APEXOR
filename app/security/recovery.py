@@ -20,6 +20,10 @@ class RecoveryEngine:
     message history. Dependency reconstruction keeps a mapping from original
     snapshot IDs to newly-created Discord IDs so recreated categories and roles
     can be referenced by subsequent channel/overwrite creation.
+
+    Retryable Discord failures are deliberately re-raised after their durable
+    recovery action is marked FAILED. RecoveryOrchestrator owns retry/backoff;
+    swallowing those exceptions here would make its retry policy ineffective.
     """
 
     def __init__(self) -> None:
@@ -96,18 +100,56 @@ class RecoveryEngine:
                 )
             await session.commit()
             return action
-        except (discord.Forbidden, discord.HTTPException, ValueError, TypeError) as exc:
+        except discord.RateLimited as exc:
+            await self._mark_failed_action(session, action, str(exc))
+            logger.warning(
+                "Retryable Discord rate limit during recovery: guild=%s resource=%s/%s retry_after=%.2fs",
+                guild.id,
+                resource_type,
+                resource_id,
+                float(exc.retry_after),
+            )
+            raise
+        except discord.HTTPException as exc:
+            await self._mark_failed_action(session, action, str(exc))
+            if 500 <= exc.status < 600:
+                logger.warning(
+                    "Retryable Discord %sxx error during recovery: guild=%s resource=%s/%s status=%s",
+                    str(exc.status)[0],
+                    guild.id,
+                    resource_type,
+                    resource_id,
+                    exc.status,
+                )
+                raise
+            logger.exception(
+                "Recovery failed with non-retryable Discord HTTP error: guild=%s resource=%s/%s status=%s",
+                guild.id,
+                resource_type,
+                resource_id,
+                exc.status,
+            )
+            return action
+        except (discord.Forbidden, ValueError, TypeError) as exc:
+            await self._mark_failed_action(session, action, str(exc))
             logger.exception(
                 "Recovery failed: guild=%s resource=%s/%s",
                 guild.id,
                 resource_type,
                 resource_id,
             )
-            action.status = "FAILED"
-            action.error = str(exc)
-            action.completed_at = datetime.now(timezone.utc)
-            await session.commit()
             return action
+
+    @staticmethod
+    async def _mark_failed_action(
+        session: AsyncSession,
+        action: RecoveryAction,
+        error: str,
+    ) -> None:
+        action.status = "FAILED"
+        action.error = error
+        action.completed_at = datetime.now(timezone.utc)
+        await session.commit()
 
     @staticmethod
     def _verify_restored_resource(
