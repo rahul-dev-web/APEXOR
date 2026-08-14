@@ -11,15 +11,17 @@ def test_destructive_velocity_escalates_within_window() -> None:
     first = tracker.record(1, 10, SecurityEventType.CHANNEL_DELETE, occurred_at=start)
     second = tracker.record(1, 10, SecurityEventType.CHANNEL_DELETE, occurred_at=start + timedelta(seconds=1))
     third = tracker.record(1, 10, SecurityEventType.CHANNEL_DELETE, occurred_at=start + timedelta(seconds=2))
-    fifth = tracker.record(1, 10, SecurityEventType.CHANNEL_DELETE, occurred_at=start + timedelta(seconds=4))
-    tenth = tracker.record(1, 10, SecurityEventType.CHANNEL_DELETE, occurred_at=start + timedelta(seconds=9))
+    fourth = tracker.record(1, 10, SecurityEventType.CHANNEL_DELETE, occurred_at=start + timedelta(seconds=4))
+    fifth = tracker.record(1, 10, SecurityEventType.CHANNEL_DELETE, occurred_at=start + timedelta(seconds=9))
 
     assert first.count == 1
     assert first.score_bonus == 0
     assert second.count == 2
     assert third.score_bonus == 25
+    assert fourth.count == 4
+    assert fourth.score_bonus == 25
+    assert fifth.count == 5
     assert fifth.score_bonus == 50
-    assert tenth.count == 5
 
 
 def test_old_events_expire_from_sliding_window() -> None:
