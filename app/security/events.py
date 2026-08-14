@@ -36,10 +36,11 @@ class SecurityEvent:
     audit_log_id: int | None = None
     event_id: str | None = None
     timestamp: float = field(default_factory=monotonic)
+    permission_added: tuple[str, ...] = ()
+    permission_removed: tuple[str, ...] = ()
 
     @property
     def fingerprint(self) -> str:
-        """Return a stable identity when Discord gives us one."""
         if self.audit_log_id is not None:
             return f"audit:{self.guild_id}:{self.audit_log_id}"
         if self.event_id is not None:
@@ -69,7 +70,11 @@ class EventCorrelator:
     def process(self, event: SecurityEvent, *, now: float | None = None) -> Detection:
         current = monotonic() if now is None else now
         self._prune_seen(current)
-        signal = score_event(event.event_type, protected_target=event.protected_target)
+        signal = score_event(
+            event.event_type,
+            protected_target=event.protected_target,
+            permission_added=event.permission_added,
+        )
         if event.fingerprint in self._seen:
             return Detection(event, signal, velocity_count=0, velocity_window_seconds=self.window_seconds)
 
