@@ -8,6 +8,20 @@ from app.core.constants import SecurityEventType
 from app.security.risk import RiskSignal, score_event
 
 
+DESTRUCTIVE_EVENTS = frozenset(
+    {
+        SecurityEventType.CHANNEL_DELETE,
+        SecurityEventType.ROLE_DELETE,
+        SecurityEventType.CHANNEL_UPDATE,
+        SecurityEventType.ROLE_UPDATE,
+        SecurityEventType.GUILD_UPDATE,
+        SecurityEventType.MEMBER_REMOVE,
+        SecurityEventType.WEBHOOK_UPDATE,
+        SecurityEventType.INTEGRATION_UPDATE,
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class SecurityEvent:
     """Normalized security event used by the deterministic detection pipeline."""
@@ -23,12 +37,7 @@ class SecurityEvent:
 
     @property
     def fingerprint(self) -> str:
-        """Return a stable identity when Discord gives us one.
-
-        Audit-log IDs are the preferred identity. Gateway events without an
-        audit ID use the event ID when available; otherwise the short-lived
-        fallback deliberately includes the event timestamp bucket.
-        """
+        """Return a stable identity when Discord gives us one."""
         if self.audit_log_id is not None:
             return f"audit:{self.guild_id}:{self.audit_log_id}"
         if self.event_id is not None:
@@ -55,18 +64,18 @@ class Detection:
 
 
 class EventCorrelator:
-    """Deterministic short-window correlator.
+    """Deterministic short-window correlator for anti-nuke behavior.
 
-    Actor-specific counters are preferred. If an actor is not known yet (normal
-    for several Gateway events), events are still normalized but are not merged
-    into an actor-specific attack score. Audit-log correlation can later attach
-    the actor and replay the event safely.
+    Per-event-type velocity is retained for precise thresholds, while a second
+    actor-wide destructive bucket detects mixed attacks such as channel deletes
+    followed by role deletes or permission changes.
     """
 
     def __init__(self, *, window_seconds: float = 10.0, max_events: int = 256) -> None:
         self.window_seconds = window_seconds
         self.max_events = max_events
         self._actor_events: dict[tuple[int, int, SecurityEventType], deque[float]] = defaultdict(deque)
+        self._actor_destructive_events: dict[tuple[int, int], deque[float]] = defaultdict(deque)
         self._seen: dict[str, float] = {}
 
     def process(self, event: SecurityEvent, *, now: float | None = None) -> Detection:
@@ -79,6 +88,7 @@ class EventCorrelator:
 
         self._seen[event.fingerprint] = current
         count = 1
+        mixed_count = 0
 
         if event.actor_id is not None:
             key = (event.guild_id, event.actor_id, event.event_type)
@@ -89,10 +99,27 @@ class EventCorrelator:
                 bucket.popleft()
             count = len(bucket)
 
+            if event.event_type in DESTRUCTIVE_EVENTS:
+                destructive_key = (event.guild_id, event.actor_id)
+                destructive_bucket = self._actor_destructive_events[destructive_key]
+                destructive_bucket.append(current)
+                self._prune_bucket(destructive_bucket, current)
+                while len(destructive_bucket) > self.max_events:
+                    destructive_bucket.popleft()
+                mixed_count = len(destructive_bucket)
+
         velocity_bonus = self._velocity_bonus(event.event_type, count)
+        mixed_bonus = self._mixed_attack_bonus(mixed_count)
+        total_bonus = min(velocity_bonus + mixed_bonus, 100)
+        reasons = signal.reason
+        if velocity_bonus:
+            reasons += f":velocity_{count}"
+        if mixed_bonus:
+            reasons += f":destructive_window_{mixed_count}"
+
         combined = RiskSignal(
-            score=min(signal.score + velocity_bonus, 100),
-            reason=signal.reason + (f":velocity_{count}" if velocity_bonus else ""),
+            score=min(signal.score + total_bonus, 100),
+            reason=reasons,
         )
         return Detection(event, combined, count, self.window_seconds)
 
@@ -112,6 +139,16 @@ class EventCorrelator:
         if event_type in {SecurityEventType.ROLE_UPDATE, SecurityEventType.GUILD_UPDATE}:
             if count >= 5:
                 return 25
+        return 0
+
+    @staticmethod
+    def _mixed_attack_bonus(count: int) -> int:
+        if count >= 10:
+            return 30
+        if count >= 5:
+            return 20
+        if count >= 3:
+            return 10
         return 0
 
     def _prune_bucket(self, bucket: deque[float], now: float) -> None:
