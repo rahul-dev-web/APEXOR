@@ -11,12 +11,12 @@ from app.ai.threat_analyst import ThreatAnalyst
 from app.bot.commands import APXORCommandTree
 from app.bot.recovery_commands import RecoveryGroup
 from app.core.config import settings
-from app.core.constants import SecurityEventType
+from app.core.constants import ProtectionState, SecurityEventType
 from app.database.session import SessionLocal
 from app.models.ai import AIThreatAssessment
+from app.models.guild import Guild
 from app.models.security import SecurityConfig
 from app.security.audit import AuditLogCorrelator, event_from_audit_entry
-from app.security.decision_runtime import resolve_decision
 from app.security.events import Detection, EventCorrelator, SecurityEvent
 from app.security.lockdown import LockdownEngine
 from app.security.notifications import SecurityNotifier
@@ -24,6 +24,7 @@ from app.security.persistence import SecurityPersistence
 from app.security.permissions.audit import PermissionAudit
 from app.security.permissions.enforcement import PermissionEnforcement
 from app.security.protected import ProtectedResourceService
+from app.security.protection_runtime import ProtectionRuntime
 from app.security.recovery_orchestrator import RecoveryOrchestrator, bind_discord_client
 from app.security.setup import GuildAutoSetup
 from app.security.snapshots import SnapshotService
@@ -363,14 +364,38 @@ class APXORClient(discord.Client):
             persisted_event_id = await self.security_persistence.record(session, detection)
             logger.info("Security event: guild=%s type=%s actor=%s target=%s risk=%d velocity=%d/%ss reason=%s", event.guild_id, event.event_type.value, event.actor_id, event.target_id, detection.signal.score, detection.velocity_count, detection.velocity_window_seconds, detection.signal.reason)
 
-            runtime = resolve_decision(detection, config)
-            decision = runtime.decision
+            db_guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == event.guild_id))
+            if db_guild is None:
+                logger.critical("Guild record disappeared during security processing: guild=%s", event.guild_id)
+                return detection
+
+            try:
+                current_state = ProtectionState(db_guild.protection_state)
+            except ValueError:
+                logger.critical(
+                    "Invalid persisted protection state for guild=%s: %r; resetting to INITIALIZING",
+                    event.guild_id,
+                    db_guild.protection_state,
+                )
+                current_state = ProtectionState.INITIALIZING
+
+            protection = ProtectionRuntime(current_state)
+            runtime_result = protection.evaluate(detection, config)
+            decision = runtime_result.decision
+
+            # Persist the state transition produced by the single deterministic
+            # protection runtime before any containment/recovery side effects.
+            db_guild.protection_state = runtime_result.state.value
+            db_guild.protection_score = decision.risk_score
+            await session.flush()
+
             logger.debug(
-                "Security decision: guild=%s state=%s severity=%s lockdown=%s recover=%s ai=%s risk=%d",
+                "Security decision: guild=%s previous_state=%s state=%s severity=%s lockdown=%s recover=%s ai=%s risk=%d",
                 event.guild_id,
-                decision.state.value,
+                current_state.value,
+                runtime_result.state.value,
                 decision.severity,
-                decision.should_lockdown,
+                runtime_result.should_lockdown,
                 decision.should_recover,
                 decision.should_analyze_with_ai,
                 decision.risk_score,
@@ -379,14 +404,7 @@ class APXORClient(discord.Client):
             if decision.should_analyze_with_ai:
                 asyncio.create_task(self._run_ai_analysis(detection, persisted_event_id))
 
-            await self.lockdown.set_protection_state(
-                session,
-                event.guild_id,
-                decision.state,
-                score=decision.risk_score,
-            )
-
-            if decision.should_lockdown:
+            if runtime_result.should_lockdown:
                 actions = await self.lockdown.enter_lockdown(
                     session,
                     guild,
