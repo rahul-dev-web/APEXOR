@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from app.core.constants import SecurityEventType
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class RiskSignal:
     score: int
     reason: str
@@ -21,6 +21,9 @@ EVENT_WEIGHTS: dict[SecurityEventType, int] = {
     SecurityEventType.GUILD_UPDATE: 20,
     SecurityEventType.MEMBER_UPDATE: 10,
     SecurityEventType.MEMBER_REMOVE: 15,
+    SecurityEventType.KICK: 20,
+    SecurityEventType.BAN_ADD: 30,
+    SecurityEventType.BAN_REMOVE: 5,
     SecurityEventType.WEBHOOK_UPDATE: 20,
     SecurityEventType.INTEGRATION_UPDATE: 30,
 }
