@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~70% of the backend security MVP architecture is now implemented.**
+**Overall: ~75% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -14,7 +14,7 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Discord Gateway client foundation with guild/role/channel/guild-update monitoring
 - SQLAlchemy 2.x async PostgreSQL support
 - Supabase/PostgreSQL-compatible database configuration
-- Alembic migration foundation through `0005_recovery_actions`
+- Alembic migration foundation through `0006_ai_threat_assessments`
 - Guild and security configuration persistence
 - Deterministic event normalization and short-window velocity correlation
 - Event fingerprinting / duplicate suppression
@@ -38,7 +38,11 @@ This is an engineering progress estimate, not a claim that the bot is production
 - **Configuration-driven anti-nuke enforcement** honoring per-guild enable/disable flags and high/critical/emergency risk thresholds
 - **Protected security alert delivery** to the APXOR critical channel and, for critical/emergency incidents, the guild owner via DM when enabled
 - **Recovery/lockdown feature flags** are enforced by the event pipeline
+- **Groq Threat Analyst foundation** with strict JSON Schema output, Pydantic validation, hashed input metadata, latency tracking, and failure isolation
+- **Auditable AI assessment storage** through `ai_threat_assessments` / Alembic `0006`
+- **AI runs asynchronously after deterministic persistence**, so Groq latency/failure cannot block lockdown, notification, or recovery
 - Recovery orchestrator unit tests covering priority ordering and lifecycle behavior
+- **Threat analyst tests** covering structured output, disabled AI, and malformed model output
 - Docker image + pytest smoke/security-core tests
 
 ### Not yet implemented
@@ -50,7 +54,6 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Role-member assignment restoration
 - Incident aggregation/deduplication beyond event-level incident creation
 - Emergency lockdown state machine beyond the current containment primitive
-- Groq threat analyst / structured AI decisions
 - `/ai` command and AI channel
 - Dashboard API
 - Dashboard frontend
@@ -77,6 +80,13 @@ Set at minimum:
 ```env
 DISCORD_TOKEN=your_discord_bot_token
 DATABASE_URL=your_postgresql_connection_string
+```
+
+For AI analysis, additionally configure:
+
+```env
+GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
 ```
 
 Run API:
@@ -109,9 +119,23 @@ When APXOR connects to a guild (or joins one), it attempts an idempotent securit
 6. Capture the first recoverable guild/role/channel baseline when snapshots are enabled.
 7. Mark the guild `PROTECTED` only after the bootstrap succeeds.
 
-**Safety rule:** auto-setup does not silently remove existing administrator or moderation permissions from human roles. Existing privileged roles are audited and logged; permission enforcement will be an explicit next phase.
+**Safety rule:** auto-setup does not silently remove existing administrator or moderation permissions from human roles. Existing privileged roles are audited and logged; permission enforcement remains an explicit, policy-controlled operation.
 
 APXOR must still be invited with the Discord permissions required for the operations it is expected to perform, and its role must be high enough in the guild hierarchy to manage the resources it owns.
+
+## AI threat analyst
+
+The Groq integration is deliberately advisory. Deterministic APXOR rules calculate the security risk first. For high-risk events, APXOR launches the Groq analysis asynchronously after the event has been persisted.
+
+The model receives a minimal normalized event payload rather than unrestricted database state. Structured Outputs enforce this response shape:
+
+- `classification`
+- `confidence`
+- `reason`
+- `recommended_action`
+- `notify_owner`
+
+The recommendation is never executed directly. Lockdown, notification, recovery, and other security actions continue to be decided by deterministic APXOR policy. If Groq is unavailable, misconfigured, slow, or returns invalid data, the security pipeline continues normally.
 
 ## Capability authorization and commands
 
@@ -159,6 +183,7 @@ High-risk role/channel deletion events are placed onto the priority recovery que
 11. Per-guild risk thresholds and feature flags are authoritative for runtime security decisions.
 12. Critical/emergency notifications use protected APXOR channels and owner DM escalation when configured.
 13. APXOR-controlled destructive operations require explicit capability authorization and confirmation.
+14. Groq analysis must never become a prerequisite for deterministic containment or recovery.
 
 ## Roadmap
 
@@ -173,5 +198,5 @@ High-risk role/channel deletion events are placed onto the priority recovery que
 9. Snapshots — **event-driven MVP implemented; reconciliation next**
 10. Recovery — **engine + priority orchestration implemented; dependency/rate-limit hardening next**
 11. Lockdown — **containment primitive implemented; state machine next**
-12. Groq Threat Analyst — next
+12. Groq Threat Analyst — **foundation implemented; `/ai` and richer incident analysis next**
 13. Dashboard — next
