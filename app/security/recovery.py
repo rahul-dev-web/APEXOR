@@ -71,8 +71,26 @@ class RecoveryEngine:
                 raise ValueError(f"Unsupported recovery resource type: {resource_type}")
 
             action.restored_resource_id = restored.id
-            action.status = "RESTORED"
+            verification_error = self._verify_restored_resource(
+                restored,
+                resource_type=resource_type,
+                snapshot=payload,
+            )
             action.completed_at = datetime.now(timezone.utc)
+            if verification_error is None:
+                action.status = "VERIFIED"
+                action.error = None
+            else:
+                action.status = "VERIFICATION_FAILED"
+                action.error = verification_error
+                logger.error(
+                    "Recovery verification failed: guild=%s resource=%s/%s restored=%s reason=%s",
+                    guild.id,
+                    resource_type,
+                    resource_id,
+                    restored.id,
+                    verification_error,
+                )
             await session.commit()
             return action
         except (discord.Forbidden, discord.HTTPException, ValueError, TypeError) as exc:
@@ -82,6 +100,53 @@ class RecoveryEngine:
             action.completed_at = datetime.now(timezone.utc)
             await session.commit()
             return action
+
+    @staticmethod
+    def _verify_restored_resource(
+        restored: discord.abc.GuildChannel | discord.Role,
+        *,
+        resource_type: str,
+        snapshot: dict[str, Any],
+    ) -> str | None:
+        """Verify the reconstructed resource against immutable snapshot invariants.
+
+        Discord assigns a new ID after deletion, so verification intentionally
+        checks semantic state rather than the original resource ID. A recovery
+        is not considered successful until the recreated object matches the
+        important snapshot fields we can reliably observe after creation.
+        """
+        expected_name = snapshot.get("name")
+        if expected_name is not None and getattr(restored, "name", None) != expected_name:
+            return f"name mismatch: expected={expected_name!r} actual={getattr(restored, 'name', None)!r}"
+
+        if resource_type == "ROLE":
+            role = restored
+            if not isinstance(role, discord.Role):
+                return "restored object is not a Discord role"
+            expected_permissions = int(snapshot.get("permissions", 0))
+            if role.permissions.value != expected_permissions:
+                return f"permission mismatch: expected={expected_permissions} actual={role.permissions.value}"
+            if bool(snapshot.get("hoist", False)) != role.hoist:
+                return f"hoist mismatch: expected={bool(snapshot.get('hoist', False))} actual={role.hoist}"
+            if bool(snapshot.get("mentionable", False)) != role.mentionable:
+                return f"mentionable mismatch: expected={bool(snapshot.get('mentionable', False))} actual={role.mentionable}"
+            return None
+
+        if not isinstance(restored, discord.abc.GuildChannel):
+            return "restored object is not a guild channel"
+        expected_type = snapshot.get("type")
+        if expected_type is not None and restored.type.value != int(expected_type):
+            return f"channel type mismatch: expected={expected_type} actual={restored.type.value}"
+        expected_parent = snapshot.get("parent_id")
+        actual_parent = getattr(restored, "category_id", None)
+        if expected_parent is not None and actual_parent != int(expected_parent):
+            # A deleted category is itself reconstructed with a new ID. In that
+            # case the semantic parent cannot be compared to the old ID; the
+            # recovery dependency step is responsible for rebuilding it.
+            parent = getattr(restored, "category", None)
+            if parent is None or getattr(parent, "name", None) != snapshot.get("parent_name"):
+                return f"parent mismatch: expected={expected_parent} actual={actual_parent}"
+        return None
 
     async def _restore_channel_dependencies(
         self,
