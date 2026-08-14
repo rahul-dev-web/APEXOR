@@ -129,11 +129,39 @@ class APXORClient(discord.Client):
 
     async def on_guild_role_update(self, before: discord.Role, after: discord.Role) -> None:
         await self._capture_resource(before, "ROLE", source="EVENT_BEFORE_UPDATE")
-        if before.permissions.value != after.permissions.value:
-            logger.warning("Role permission change detected: guild=%s role=%s before=%s after=%s", after.guild.id, after.id, before.permissions.value, after.permissions.value)
-        detection = await self._process_security_event(SecurityEvent(guild_id=after.guild.id, event_type=SecurityEventType.ROLE_UPDATE, target_id=after.id), after.guild)
+        permission_added, permission_removed = self._permission_diff(before.permissions, after.permissions)
+        if permission_added:
+            logger.warning(
+                "Role permission grant detected: guild=%s role=%s added=%s",
+                after.guild.id,
+                after.id,
+                ",".join(permission_added),
+            )
+        detection = await self._process_security_event(
+            SecurityEvent(
+                guild_id=after.guild.id,
+                event_type=SecurityEventType.ROLE_UPDATE,
+                target_id=after.id,
+                permission_added=permission_added,
+                permission_removed=permission_removed,
+            ),
+            after.guild,
+        )
         await self._capture_after_if_safe(after, "ROLE", detection)
         await self._audit_and_enforce_permissions(after.guild, changed_role=after)
+
+    @staticmethod
+    def _permission_diff(before: discord.Permissions, after: discord.Permissions) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Return stable permission grant/revoke names for deterministic risk scoring."""
+        added: list[str] = []
+        removed: list[str] = []
+        for name, enabled_after in after:
+            enabled_before = getattr(before, name, False)
+            if enabled_after and not enabled_before:
+                added.append(name)
+            elif enabled_before and not enabled_after:
+                removed.append(name)
+        return tuple(sorted(added)), tuple(sorted(removed))
 
     async def on_guild_role_delete(self, role: discord.Role) -> None:
         await self._capture_resource(role, "ROLE", source="EVENT_BEFORE_DELETE")
@@ -288,13 +316,15 @@ class APXORClient(discord.Client):
                     audit_log_id=match.audit_log_id,
                     event_id=event.event_id,
                     timestamp=event.timestamp,
+                    permission_added=event.permission_added,
+                    permission_removed=event.permission_removed,
                 )
                 logger.info("Audit correlation: guild=%s audit=%s actor=%s action=%s target=%s", event.guild_id, match.audit_log_id, match.actor_id, match.action, event.target_id)
 
             if event.target_id is not None:
                 protected = await self.protected_resources.is_protected_target(session, guild_id=event.guild_id, target_id=event.target_id, event_type=event.event_type.value)
                 if protected and not event.protected_target:
-                    event = SecurityEvent(guild_id=event.guild_id, event_type=event.event_type, target_id=event.target_id, actor_id=event.actor_id, protected_target=True, audit_log_id=event.audit_log_id, event_id=event.event_id, timestamp=event.timestamp)
+                    event = SecurityEvent(guild_id=event.guild_id, event_type=event.event_type, target_id=event.target_id, actor_id=event.actor_id, protected_target=True, audit_log_id=event.audit_log_id, event_id=event.event_id, timestamp=event.timestamp, permission_added=event.permission_added, permission_removed=event.permission_removed)
 
             detection = self.event_correlator.process(event)
             if detection.velocity_count == 0:
