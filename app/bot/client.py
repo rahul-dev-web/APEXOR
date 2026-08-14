@@ -1,14 +1,14 @@
-import asyncio
 import logging
 
 import discord
 from sqlalchemy import select
 
+from app.bot.commands import APXORCommandTree
 from app.core.config import settings
-from app.core.constants import ProtectionState, SecurityEventType
+from app.core.constants import SecurityEventType
 from app.database.session import SessionLocal
 from app.models.security import SecurityConfig
-from app.security.audit import AuditLogCorrelator
+from app.security.audit import AuditLogCorrelator, event_from_audit_entry
 from app.security.events import Detection, EventCorrelator, SecurityEvent
 from app.security.lockdown import LockdownEngine, state_for_risk
 from app.security.notifications import SecurityNotifier
@@ -19,7 +19,6 @@ from app.security.protected import ProtectedResourceService
 from app.security.recovery_orchestrator import RecoveryOrchestrator, bind_discord_client
 from app.security.setup import GuildAutoSetup
 from app.security.snapshots import SnapshotService
-from app.bot.commands import APXORCommandTree
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +29,10 @@ class APXORClient(discord.Client):
     def __init__(self) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
+        # Required for Discord's real-time GUILD_AUDIT_LOG_ENTRY_CREATE signal.
+        # The corresponding privileged intent must also be enabled in the
+        # Discord Developer Portal for the production bot application.
+        intents.moderation = True
         super().__init__(intents=intents)
         self.tree = APXORCommandTree(self)
         self._commands_synced = False
@@ -78,6 +81,25 @@ class APXORClient(discord.Client):
         await self._audit_and_enforce_permissions(guild)
         await self._run_auto_setup(guild)
 
+    async def on_audit_log_entry_create(self, entry: discord.AuditLogEntry) -> None:
+        """Consume Discord's real-time audit-log signal when available."""
+        guild = entry.guild
+        if guild is None:
+            return
+        event = event_from_audit_entry(guild, entry)
+        if event is None:
+            return
+        logger.info(
+            "Audit Gateway event: guild=%s audit=%s action=%s actor=%s target=%s event=%s",
+            guild.id,
+            entry.id,
+            entry.action,
+            event.actor_id,
+            event.target_id,
+            event.event_type.value,
+        )
+        await self._process_security_event(event, guild)
+
     async def on_guild_role_create(self, role: discord.Role) -> None:
         await self._capture_resource(role, "ROLE", source="EVENT_AFTER_CREATE")
         await self._process_security_event(SecurityEvent(guild_id=role.guild.id, event_type=SecurityEventType.ROLE_CREATE, target_id=role.id), role.guild)
@@ -114,6 +136,20 @@ class APXORClient(discord.Client):
         await self._capture_resource(before, "GUILD", source="EVENT_BEFORE_UPDATE")
         detection = await self._process_security_event(SecurityEvent(guild_id=after.id, event_type=SecurityEventType.GUILD_UPDATE), after)
         await self._capture_after_if_safe(after, "GUILD", detection)
+
+    async def on_webhooks_update(self, guild: discord.Guild) -> None:
+        """Monitor webhook topology changes and resolve the actor via audit logs."""
+        await self._process_security_event(
+            SecurityEvent(guild_id=guild.id, event_type=SecurityEventType.WEBHOOK_UPDATE),
+            guild,
+        )
+
+    async def on_guild_integrations_update(self, guild: discord.Guild) -> None:
+        """Monitor integration changes and resolve the actor via audit logs."""
+        await self._process_security_event(
+            SecurityEvent(guild_id=guild.id, event_type=SecurityEventType.INTEGRATION_UPDATE),
+            guild,
+        )
 
     async def _capture_resource(self, resource, resource_type: str, *, source: str) -> None:
         if SessionLocal is None:
@@ -185,18 +221,6 @@ class APXORClient(discord.Client):
         except Exception:
             logger.exception("Failed to persist guild state: guild=%s", guild.id)
 
-    async def _persist_detection(self, detection: Detection) -> int | None:
-        if SessionLocal is None:
-            return None
-        try:
-            guild = self.get_guild(detection.event.guild_id)
-            async with SessionLocal() as session:
-                await self.security_persistence.ensure_guild(session, detection.event.guild_id, name=guild.name if guild else "Unknown Guild", owner_id=guild.owner_id if guild else 0)
-                return await self.security_persistence.record(session, detection)
-        except Exception:
-            logger.exception("Security persistence failed; detection remains in-memory: guild=%s fingerprint=%s", detection.event.guild_id, detection.event.fingerprint)
-            return None
-
     async def _process_security_event(self, event: SecurityEvent, guild: discord.Guild) -> Detection | None:
         if SessionLocal is None:
             logger.warning("Security event skipped because database is not configured: guild=%s", event.guild_id)
@@ -207,9 +231,22 @@ class APXORClient(discord.Client):
             if config is not None and not config.anti_nuke_enabled:
                 return None
 
-            match = await self.audit_correlator.correlate(guild, event) if config is None or config.audit_correlation_enabled else None
+            # Real-time audit events already contain the actor and audit ID.
+            # Resource events use REST audit-log correlation as a fallback.
+            match = None
+            if event.audit_log_id is None and (config is None or config.audit_correlation_enabled):
+                match = await self.audit_correlator.correlate(guild, event)
             if match is not None:
-                event = SecurityEvent(guild_id=event.guild_id, event_type=event.event_type, target_id=event.target_id, actor_id=match.actor_id, protected_target=event.protected_target, audit_log_id=match.audit_log_id, event_id=event.event_id, timestamp=event.timestamp)
+                event = SecurityEvent(
+                    guild_id=event.guild_id,
+                    event_type=event.event_type,
+                    target_id=event.target_id,
+                    actor_id=match.actor_id,
+                    protected_target=event.protected_target,
+                    audit_log_id=match.audit_log_id,
+                    event_id=event.event_id,
+                    timestamp=event.timestamp,
+                )
                 logger.info("Audit correlation: guild=%s audit=%s actor=%s action=%s target=%s", event.guild_id, match.audit_log_id, match.actor_id, match.action, event.target_id)
 
             if event.target_id is not None:
@@ -233,16 +270,8 @@ class APXORClient(discord.Client):
             if event.protected_target and event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE, SecurityEventType.ROLE_UPDATE}:
                 lockdown_threshold = min(lockdown_threshold, high_threshold)
 
-            # Persist the highest observed protection state before taking
-            # containment actions. State transitions are monotonic; recovery
-            # code is responsible for explicitly leaving containment states.
             risk_state = state_for_risk(detection.signal.score)
-            await self.lockdown.set_protection_state(
-                session,
-                event.guild_id,
-                risk_state,
-                score=detection.signal.score,
-            )
+            await self.lockdown.set_protection_state(session, event.guild_id, risk_state, score=detection.signal.score)
 
             if detection.signal.score >= lockdown_threshold and (config is None or config.lockdown_enabled):
                 actions = await self.lockdown.enter_lockdown(session, guild, actor_id=event.actor_id, event_log_id=persisted_event_id)
