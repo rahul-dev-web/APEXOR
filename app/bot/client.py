@@ -4,6 +4,7 @@ import discord
 
 from app.core.config import settings
 from app.core.constants import SecurityEventType
+from app.security.audit import AuditLogCorrelator
 from app.security.events import EventCorrelator, SecurityEvent
 from app.security.permissions.audit import PermissionAudit
 
@@ -20,6 +21,7 @@ class APXORClient(discord.Client):
         super().__init__(intents=intents)
         self.permission_audit = PermissionAudit()
         self.event_correlator = EventCorrelator(window_seconds=10.0)
+        self.audit_correlator = AuditLogCorrelator(limit=10)
 
     async def setup_hook(self) -> None:
         logger.info("APXOR Discord client setup initialized")
@@ -40,12 +42,13 @@ class APXORClient(discord.Client):
         self._log_permission_findings(guild)
 
     async def on_guild_role_create(self, role: discord.Role) -> None:
-        self._process_security_event(
+        await self._process_security_event(
             SecurityEvent(
                 guild_id=role.guild.id,
                 event_type=SecurityEventType.ROLE_CREATE,
                 target_id=role.id,
-            )
+            ),
+            role.guild,
         )
         self._log_permission_findings(role.guild)
 
@@ -58,12 +61,13 @@ class APXORClient(discord.Client):
                 before.permissions.value,
                 after.permissions.value,
             )
-        self._process_security_event(
+        await self._process_security_event(
             SecurityEvent(
                 guild_id=after.guild.id,
                 event_type=SecurityEventType.ROLE_UPDATE,
                 target_id=after.id,
-            )
+            ),
+            after.guild,
         )
         self._log_permission_findings(after.guild)
 
@@ -74,21 +78,23 @@ class APXORClient(discord.Client):
             role.id,
             role.name,
         )
-        self._process_security_event(
+        await self._process_security_event(
             SecurityEvent(
                 guild_id=role.guild.id,
                 event_type=SecurityEventType.ROLE_DELETE,
                 target_id=role.id,
-            )
+            ),
+            role.guild,
         )
 
     async def on_guild_channel_create(self, channel: discord.abc.GuildChannel) -> None:
-        self._process_security_event(
+        await self._process_security_event(
             SecurityEvent(
                 guild_id=channel.guild.id,
                 event_type=SecurityEventType.CHANNEL_CREATE,
                 target_id=channel.id,
-            )
+            ),
+            channel.guild,
         )
 
     async def on_guild_channel_update(
@@ -96,12 +102,13 @@ class APXORClient(discord.Client):
         before: discord.abc.GuildChannel,
         after: discord.abc.GuildChannel,
     ) -> None:
-        self._process_security_event(
+        await self._process_security_event(
             SecurityEvent(
                 guild_id=after.guild.id,
                 event_type=SecurityEventType.CHANNEL_UPDATE,
                 target_id=after.id,
-            )
+            ),
+            after.guild,
         )
 
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
@@ -111,32 +118,57 @@ class APXORClient(discord.Client):
             channel.id,
             channel.name,
         )
-        self._process_security_event(
+        await self._process_security_event(
             SecurityEvent(
                 guild_id=channel.guild.id,
                 event_type=SecurityEventType.CHANNEL_DELETE,
                 target_id=channel.id,
-            )
+            ),
+            channel.guild,
         )
 
     async def on_guild_update(self, before: discord.Guild, after: discord.Guild) -> None:
-        self._process_security_event(
+        await self._process_security_event(
             SecurityEvent(
                 guild_id=after.id,
                 event_type=SecurityEventType.GUILD_UPDATE,
-            )
+            ),
+            after,
         )
 
-    def _process_security_event(self, event: SecurityEvent) -> None:
+    async def _process_security_event(self, event: SecurityEvent, guild: discord.Guild) -> None:
+        """Enrich a Gateway event with audit identity, then score it."""
+        match = await self.audit_correlator.correlate(guild, event)
+        if match is not None:
+            event = SecurityEvent(
+                guild_id=event.guild_id,
+                event_type=event.event_type,
+                target_id=event.target_id,
+                actor_id=match.actor_id,
+                protected_target=event.protected_target,
+                audit_log_id=match.audit_log_id,
+                event_id=event.event_id,
+                timestamp=event.timestamp,
+            )
+            logger.info(
+                "Audit correlation: guild=%s audit=%s actor=%s action=%s target=%s",
+                event.guild_id,
+                match.audit_log_id,
+                match.actor_id,
+                match.action,
+                event.target_id,
+            )
+
         detection = self.event_correlator.process(event)
         if detection.velocity_count == 0:
             logger.debug("Duplicate security event suppressed: %s", event.fingerprint)
             return
 
         logger.info(
-            "Security event: guild=%s type=%s target=%s risk=%d velocity=%d/%ss reason=%s",
+            "Security event: guild=%s type=%s actor=%s target=%s risk=%d velocity=%d/%ss reason=%s",
             event.guild_id,
             event.event_type.value,
+            event.actor_id,
             event.target_id,
             detection.signal.score,
             detection.velocity_count,
@@ -146,16 +178,18 @@ class APXORClient(discord.Client):
 
         if detection.signal.score >= 80:
             logger.critical(
-                "CRITICAL security pattern detected: guild=%s type=%s target=%s risk=%d",
+                "CRITICAL security pattern detected: guild=%s actor=%s type=%s target=%s risk=%d",
                 event.guild_id,
+                event.actor_id,
                 event.event_type.value,
                 event.target_id,
                 detection.signal.score,
             )
         elif detection.signal.score >= 60:
             logger.warning(
-                "HIGH security pattern detected: guild=%s type=%s target=%s risk=%d",
+                "HIGH security pattern detected: guild=%s actor=%s type=%s target=%s risk=%d",
                 event.guild_id,
+                event.actor_id,
                 event.event_type.value,
                 event.target_id,
                 detection.signal.score,
