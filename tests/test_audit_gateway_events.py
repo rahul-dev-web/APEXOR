@@ -35,11 +35,6 @@ def test_audit_entry_normalizes_actor_target_and_audit_id() -> None:
 
 def test_unknown_audit_action_is_ignored() -> None:
     guild = SimpleNamespace(id=123)
-    entry = SimpleNamespace(
-        id=987,
-        action=discord.AuditLogAction.automod_rule_create,
-        user=None,
-        target=None,
-    )
+    entry = SimpleNamespace(id=987, action=object(), user=None, target=None)
 
     assert event_from_audit_entry(guild, entry) is None
