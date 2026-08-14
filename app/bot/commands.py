@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.core.constants import Capability
 from app.database.session import SessionLocal
 from app.models.guild import Guild
+from app.models.security import SecurityConfig
 from app.security.authorization import AuthorizationService
 
 
@@ -48,12 +49,14 @@ class SecurityGroup(app_commands.Group):
             return
         async with SessionLocal() as session:
             guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == interaction.guild.id))
+            config = await session.scalar(select(SecurityConfig).where(SecurityConfig.guild_id == interaction.guild.id))
         if guild is None:
             await interaction.response.send_message("APXOR has not initialized this server yet.", ephemeral=True)
             return
         embed = discord.Embed(title="APXOR Security", color=discord.Color.blurple())
         embed.add_field(name="Protection", value=guild.protection_state, inline=True)
         embed.add_field(name="Score", value=f"{guild.protection_score}/100", inline=True)
+        embed.add_field(name="Permission Enforcement", value="ON" if config and config.permission_enforcement_enabled else "OFF", inline=True)
         embed.add_field(name="Owner", value=f"<@{guild.owner_discord_id}>", inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -70,21 +73,13 @@ class SecurityGroup(app_commands.Group):
         selected = Capability(capability.value)
         async with SessionLocal() as session:
             try:
-                await authorization.grant(
-                    session,
-                    guild_id=interaction.guild.id,
-                    discord_user_id=member.id,
-                    capability=selected,
-                    granted_by_discord_id=interaction.user.id,
-                )
+                await authorization.grant(session, guild_id=interaction.guild.id, discord_user_id=member.id, capability=selected, granted_by_discord_id=interaction.user.id)
                 await session.commit()
             except (PermissionError, ValueError) as exc:
                 await session.rollback()
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        await interaction.response.send_message(
-            f"Granted `{selected.value}` to {member.mention}.", ephemeral=True
-        )
+        await interaction.response.send_message(f"Granted `{selected.value}` to {member.mention}.", ephemeral=True)
 
     @app_commands.command(name="revoke", description="Revoke an APXOR capability from a member")
     @app_commands.describe(member="Member losing the capability", capability="Capability to revoke")
@@ -99,13 +94,7 @@ class SecurityGroup(app_commands.Group):
         selected = Capability(capability.value)
         async with SessionLocal() as session:
             try:
-                changed = await authorization.revoke(
-                    session,
-                    guild_id=interaction.guild.id,
-                    discord_user_id=member.id,
-                    capability=selected,
-                    revoked_by_discord_id=interaction.user.id,
-                )
+                changed = await authorization.revoke(session, guild_id=interaction.guild.id, discord_user_id=member.id, capability=selected, revoked_by_discord_id=interaction.user.id)
                 await session.commit()
             except PermissionError as exc:
                 await session.rollback()
@@ -113,6 +102,29 @@ class SecurityGroup(app_commands.Group):
                 return
         message = f"Revoked `{selected.value}` from {member.mention}." if changed else "No active capability grant was found."
         await interaction.response.send_message(message, ephemeral=True)
+
+    @app_commands.command(name="permission-enforcement", description="Enable or disable automatic removal of critical Discord permissions")
+    @app_commands.describe(enabled="Whether APXOR should automatically enforce its permission policy")
+    async def permission_enforcement(self, interaction: discord.Interaction, enabled: bool) -> None:
+        if interaction.guild is None or interaction.user.id != interaction.guild.owner_id:
+            await interaction.response.send_message("Only the current Discord guild owner can change permission enforcement.", ephemeral=True)
+            return
+        if SessionLocal is None:
+            await interaction.response.send_message("Database is unavailable.", ephemeral=True)
+            return
+        async with SessionLocal() as session:
+            config = await session.scalar(select(SecurityConfig).where(SecurityConfig.guild_id == interaction.guild.id))
+            if config is None:
+                await interaction.response.send_message("APXOR security configuration is not initialized yet.", ephemeral=True)
+                return
+            config.permission_enforcement_enabled = enabled
+            await session.commit()
+        state = "enabled" if enabled else "disabled"
+        await interaction.response.send_message(
+            f"Permission enforcement **{state}**. "
+            + ("APXOR will now remove critical permissions from manageable non-owner roles." if enabled else "Existing permissions will be audited but not automatically changed."),
+            ephemeral=True,
+        )
 
 
 class ChannelGroup(app_commands.Group):
