@@ -29,8 +29,10 @@ class RecoveryOrchestrator:
 
     Detection stays on the Gateway callback path; Discord mutations happen here
     so a burst of destructive events cannot create uncontrolled concurrent REST
-    calls. The queue is intentionally in-memory for the MVP and can later be
-    replaced by Redis/Render queue infrastructure without changing callers.
+    calls. Duplicate events for the same resource are coalesced while a recovery
+    job is queued or executing. The queue is intentionally in-memory for the MVP
+    and can later be replaced by Redis/Render queue infrastructure without
+    changing callers.
     """
 
     def __init__(
@@ -50,6 +52,11 @@ class RecoveryOrchestrator:
         self._recovery_spacing = max(0.0, recovery_spacing)
         self._retry_cap = max(0.1, retry_cap)
         self._last_request_at = 0.0
+        self._pending_keys: set[tuple[int, str, int]] = set()
+
+    @staticmethod
+    def _job_key(guild_id: int, resource_type: str, resource_id: int) -> tuple[int, str, int]:
+        return guild_id, resource_type.upper(), resource_id
 
     async def start(self) -> None:
         if self._worker is None or self._worker.done():
@@ -66,7 +73,9 @@ class RecoveryOrchestrator:
             except asyncio.CancelledError:
                 pass
             self._worker = None
-            logger.info("Recovery orchestrator stopped")
+        # Cancelled jobs must not permanently block future recovery attempts.
+        self._pending_keys.clear()
+        logger.info("Recovery orchestrator stopped")
 
     async def enqueue(
         self,
@@ -80,27 +89,49 @@ class RecoveryOrchestrator:
         if self._stopping:
             return False
         await self.start()
+
+        key = self._job_key(guild_id, resource_type, resource_id)
+        if key in self._pending_keys:
+            logger.info(
+                "Duplicate recovery coalesced: guild=%s resource=%s/%s",
+                guild_id,
+                resource_type,
+                resource_id,
+            )
+            return False
+
+        job = RecoveryJob(
+            guild_id=guild_id,
+            resource_type=resource_type.upper(),
+            resource_id=resource_id,
+            reason=reason,
+            priority=priority,
+        )
         self._sequence += 1
         try:
-            self._queue.put_nowait((priority, self._sequence, RecoveryJob(
-                guild_id=guild_id,
-                resource_type=resource_type,
-                resource_id=resource_id,
-                reason=reason,
-                priority=priority,
-            )))
+            self._queue.put_nowait((priority, self._sequence, job))
+            self._pending_keys.add(key)
             logger.warning(
                 "Recovery queued: guild=%s resource=%s/%s priority=%s",
-                guild_id, resource_type, resource_id, priority,
+                guild_id,
+                resource_type,
+                resource_id,
+                priority,
             )
             return True
         except asyncio.QueueFull:
-            logger.critical("Recovery queue full: guild=%s resource=%s/%s", guild_id, resource_type, resource_id)
+            logger.critical(
+                "Recovery queue full: guild=%s resource=%s/%s",
+                guild_id,
+                resource_type,
+                resource_id,
+            )
             return False
 
     async def _run(self) -> None:
         while True:
             _priority, _sequence, job = await self._queue.get()
+            key = self._job_key(job.guild_id, job.resource_type, job.resource_id)
             try:
                 await self._execute_with_retry(job)
             except asyncio.CancelledError:
@@ -108,9 +139,12 @@ class RecoveryOrchestrator:
             except Exception:
                 logger.exception(
                     "Unhandled recovery job failure: guild=%s resource=%s/%s",
-                    job.guild_id, job.resource_type, job.resource_id,
+                    job.guild_id,
+                    job.resource_type,
+                    job.resource_id,
                 )
             finally:
+                self._pending_keys.discard(key)
                 self._queue.task_done()
 
     async def _execute_with_retry(self, job: RecoveryJob) -> None:
@@ -123,7 +157,9 @@ class RecoveryOrchestrator:
                 if attempt >= self._max_attempts:
                     logger.error(
                         "Recovery exhausted rate-limit retries: guild=%s resource=%s/%s",
-                        job.guild_id, job.resource_type, job.resource_id,
+                        job.guild_id,
+                        job.resource_type,
+                        job.resource_id,
                     )
                     raise
                 delay = min(max(float(exc.retry_after), 0.0), self._retry_cap)
