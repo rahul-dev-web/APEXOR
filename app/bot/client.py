@@ -3,18 +3,15 @@ import logging
 import discord
 
 from app.core.config import settings
+from app.core.constants import SecurityEventType
+from app.security.events import EventCorrelator, SecurityEvent
 from app.security.permissions.audit import PermissionAudit
 
 logger = logging.getLogger(__name__)
 
 
 class APXORClient(discord.Client):
-    """Discord Gateway client for APXOR's security core.
-
-    The initial Gateway surface intentionally requests only the guilds intent.
-    Member intent is not required for the current permission/event pipeline and
-    should not be enabled until a feature explicitly needs it.
-    """
+    """Discord Gateway client for APXOR's deterministic security core."""
 
     def __init__(self) -> None:
         intents = discord.Intents.none()
@@ -22,6 +19,7 @@ class APXORClient(discord.Client):
 
         super().__init__(intents=intents)
         self.permission_audit = PermissionAudit()
+        self.event_correlator = EventCorrelator(window_seconds=10.0)
 
     async def setup_hook(self) -> None:
         logger.info("APXOR Discord client setup initialized")
@@ -42,6 +40,13 @@ class APXORClient(discord.Client):
         self._log_permission_findings(guild)
 
     async def on_guild_role_create(self, role: discord.Role) -> None:
+        self._process_security_event(
+            SecurityEvent(
+                guild_id=role.guild.id,
+                event_type=SecurityEventType.ROLE_CREATE,
+                target_id=role.id,
+            )
+        )
         self._log_permission_findings(role.guild)
 
     async def on_guild_role_update(self, before: discord.Role, after: discord.Role) -> None:
@@ -53,6 +58,13 @@ class APXORClient(discord.Client):
                 before.permissions.value,
                 after.permissions.value,
             )
+        self._process_security_event(
+            SecurityEvent(
+                guild_id=after.guild.id,
+                event_type=SecurityEventType.ROLE_UPDATE,
+                target_id=after.id,
+            )
+        )
         self._log_permission_findings(after.guild)
 
     async def on_guild_role_delete(self, role: discord.Role) -> None:
@@ -62,6 +74,92 @@ class APXORClient(discord.Client):
             role.id,
             role.name,
         )
+        self._process_security_event(
+            SecurityEvent(
+                guild_id=role.guild.id,
+                event_type=SecurityEventType.ROLE_DELETE,
+                target_id=role.id,
+            )
+        )
+
+    async def on_guild_channel_create(self, channel: discord.abc.GuildChannel) -> None:
+        self._process_security_event(
+            SecurityEvent(
+                guild_id=channel.guild.id,
+                event_type=SecurityEventType.CHANNEL_CREATE,
+                target_id=channel.id,
+            )
+        )
+
+    async def on_guild_channel_update(
+        self,
+        before: discord.abc.GuildChannel,
+        after: discord.abc.GuildChannel,
+    ) -> None:
+        self._process_security_event(
+            SecurityEvent(
+                guild_id=after.guild.id,
+                event_type=SecurityEventType.CHANNEL_UPDATE,
+                target_id=after.id,
+            )
+        )
+
+    async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
+        logger.warning(
+            "Guild channel deleted: guild=%s channel=%s name=%s",
+            channel.guild.id,
+            channel.id,
+            channel.name,
+        )
+        self._process_security_event(
+            SecurityEvent(
+                guild_id=channel.guild.id,
+                event_type=SecurityEventType.CHANNEL_DELETE,
+                target_id=channel.id,
+            )
+        )
+
+    async def on_guild_update(self, before: discord.Guild, after: discord.Guild) -> None:
+        self._process_security_event(
+            SecurityEvent(
+                guild_id=after.id,
+                event_type=SecurityEventType.GUILD_UPDATE,
+            )
+        )
+
+    def _process_security_event(self, event: SecurityEvent) -> None:
+        detection = self.event_correlator.process(event)
+        if detection.velocity_count == 0:
+            logger.debug("Duplicate security event suppressed: %s", event.fingerprint)
+            return
+
+        logger.info(
+            "Security event: guild=%s type=%s target=%s risk=%d velocity=%d/%ss reason=%s",
+            event.guild_id,
+            event.event_type.value,
+            event.target_id,
+            detection.signal.score,
+            detection.velocity_count,
+            detection.velocity_window_seconds,
+            detection.signal.reason,
+        )
+
+        if detection.signal.score >= 80:
+            logger.critical(
+                "CRITICAL security pattern detected: guild=%s type=%s target=%s risk=%d",
+                event.guild_id,
+                event.event_type.value,
+                event.target_id,
+                detection.signal.score,
+            )
+        elif detection.signal.score >= 60:
+            logger.warning(
+                "HIGH security pattern detected: guild=%s type=%s target=%s risk=%d",
+                event.guild_id,
+                event.event_type.value,
+                event.target_id,
+                detection.signal.score,
+            )
 
     def _log_permission_findings(self, guild: discord.Guild) -> None:
         for finding in self.permission_audit.audit_guild(guild):
