@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~62% of the backend security MVP architecture is now implemented.**
+**Overall: ~66% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -30,6 +30,9 @@ This is an engineering progress estimate, not a claim that the bot is production
 - **Snapshot-based recovery engine** with auditable recovery actions and idempotent existing-resource checks
 - **Priority-aware recovery orchestrator** with a single worker, bounded queue, protected-resource priority, lifecycle management, and a replaceable queue boundary
 - **Automatic recovery trigger** for high-risk channel/role deletion events
+- **Configuration-driven anti-nuke enforcement** honoring per-guild enable/disable flags and high/critical/emergency risk thresholds
+- **Protected security alert delivery** to the APXOR critical channel and, for critical/emergency incidents, the guild owner via DM when enabled
+- **Recovery/lockdown feature flags** are now enforced by the event pipeline
 - **Recovery orchestrator unit tests** covering priority ordering and lifecycle behavior
 - Docker image + pytest smoke/security-core tests
 
@@ -40,7 +43,7 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Complete Gateway audit-event coverage and robust actor correlation
 - Multi-resource recovery dependency ordering (category → channel → permissions)
 - Role-member assignment restoration
-- Incident aggregation and owner notification delivery
+- Incident aggregation/deduplication beyond event-level incident creation
 - Emergency lockdown state machine beyond the current containment primitive
 - Groq threat analyst / structured AI decisions
 - `/ai` command and AI channel
@@ -145,6 +148,8 @@ The next step is wiring these gates into actual APXOR slash commands and dashboa
 8. Auto-setup is conservative and never silently strips user permissions.
 9. Dashboard/client input is untrusted; privileged operations require server-side authorization.
 10. Recovery is queued and bounded instead of issuing uncontrolled concurrent Discord REST mutations.
+11. Per-guild risk thresholds and feature flags are authoritative for runtime security decisions.
+12. Critical/emergency notifications use protected APXOR channels and owner DM escalation when configured.
 
 ## Roadmap
 
@@ -154,10 +159,10 @@ The next step is wiring these gates into actual APXOR slash commands and dashboa
 4. Auto Setup — **implemented**
 5. Permission Auditor — **foundation implemented**
 6. Capability Authorization — **foundation implemented; command/API wiring next**
-7. Anti-Nuke Detection — **foundation implemented; hardening next**
+7. Anti-Nuke Detection — **foundation implemented; configuration/notification hardening implemented; behavior hardening next**
 8. Audit Correlation — **foundation implemented; hardening next**
 9. Snapshots — **event-driven MVP implemented; reconciliation next**
 10. Recovery — **engine + priority orchestration implemented; dependency/rate-limit hardening next**
-11. Lockdown — **containment primitive implemented**
+11. Lockdown — **containment primitive implemented; state machine next**
 12. Groq Threat Analyst — next
 13. Dashboard — next
