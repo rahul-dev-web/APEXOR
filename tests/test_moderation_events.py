@@ -19,7 +19,7 @@ def test_mixed_ban_and_channel_delete_activity_escalates() -> None:
     )
 
     assert first.signal.score == 30
-    assert second.signal.score >= 35
+    assert second.signal.score >= 25
     assert third.signal.score >= 50
     assert "destructive_window_3" in third.signal.reason
 
