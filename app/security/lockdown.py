@@ -15,7 +15,7 @@ from app.security.persistence import SecurityPersistence
 logger = logging.getLogger(__name__)
 
 
-# State transitions are deliberately explicit.  A security incident must never
+# State transitions are deliberately explicit. A security incident must never
 # be able to jump from containment directly back to PROTECTED merely because a
 # later low-risk event was observed.
 _ALLOWED_TRANSITIONS: dict[ProtectionState, frozenset[ProtectionState]] = {
@@ -88,7 +88,8 @@ _ALLOWED_TRANSITIONS: dict[ProtectionState, frozenset[ProtectionState]] = {
 
 
 def state_for_risk(score: int) -> ProtectionState:
-    """Map a deterministic risk score to the guild protection state."""
+    """Map a deterministic risk score to the canonical protection state."""
+    score = max(0, min(score, 100))
     if score >= 95:
         return ProtectionState.LOCKDOWN
     if score >= 80:
@@ -100,7 +101,7 @@ def state_for_risk(score: int) -> ProtectionState:
 
 def should_enter_lockdown(score: int, *, threshold: int = 80) -> bool:
     """Return whether a risk score crosses the configured containment boundary."""
-    return score >= threshold
+    return max(0, min(score, 100)) >= threshold
 
 
 def can_transition(
@@ -200,7 +201,19 @@ class LockdownEngine:
         actor_id: int | None,
         event_log_id: int | None = None,
     ) -> str:
-        if db_guild := await session.scalar(select(Guild).where(Guild.discord_guild_id == guild.id)):
+        """Enter emergency containment and report whether actor containment succeeded.
+
+        Discord cannot let APXOR intercept another application's REST request.
+        This method therefore treats the persisted LOCKDOWN state as a control
+        state, while separately reporting whether the suspected actor's
+        critical permissions were actually removed. An owner or a role above
+        APXOR is explicitly reported as partial containment rather than falsely
+        claiming the threat was neutralized.
+        """
+        db_guild = await session.scalar(
+            select(Guild).where(Guild.discord_guild_id == guild.id)
+        )
+        if db_guild is not None:
             await self.set_protection_state(
                 session,
                 guild.id,
@@ -212,12 +225,23 @@ class LockdownEngine:
             await self.persistence.mark_containment_started(session, event_log_id)
 
         actions: list[str] = []
+        containment_success = False
         bot_member = guild.me
         bot_top_role = bot_member.top_role if bot_member is not None else None
 
-        if actor_id is not None and bot_top_role is not None:
+        if actor_id is None:
+            containment_result = "CONTAINMENT_PARTIAL_UNKNOWN_ACTOR"
+        elif actor_id == guild.owner_id:
+            containment_result = "CONTAINMENT_PARTIAL_OWNER_UNMANAGEABLE"
+        elif bot_top_role is None:
+            containment_result = "CONTAINMENT_PARTIAL_BOT_ROLE_UNAVAILABLE"
+        else:
             member = guild.get_member(actor_id)
-            if member is not None and member.id != guild.owner_id:
+            if member is None:
+                containment_result = "CONTAINMENT_PARTIAL_ACTOR_NOT_CACHED"
+            else:
+                attempted = False
+                failed = False
                 for role in member.roles:
                     if role.is_default() or role >= bot_top_role:
                         continue
@@ -230,6 +254,7 @@ class LockdownEngine:
                     if not critical:
                         continue
 
+                    attempted = True
                     updated = discord.Permissions(current.value)
                     for name in critical:
                         setattr(updated, name, False)
@@ -239,8 +264,11 @@ class LockdownEngine:
                             permissions=updated,
                             reason="APXOR emergency lockdown: remove critical permissions",
                         )
-                        actions.append(f"role:{role.id}:removed={','.join(sorted(critical))}")
+                        actions.append(
+                            f"role:{role.id}:removed={','.join(sorted(critical))}"
+                        )
                     except (discord.Forbidden, discord.HTTPException) as exc:
+                        failed = True
                         logger.warning(
                             "Could not contain role %s in guild %s: %s",
                             role.id,
@@ -248,13 +276,26 @@ class LockdownEngine:
                             exc,
                         )
 
-        containment_success = bool(actions) or actor_id is None or bot_top_role is None
+                containment_success = attempted and not failed and bool(actions)
+                if containment_success:
+                    containment_result = "CONTAINED"
+                elif attempted:
+                    containment_result = "CONTAINMENT_PARTIAL"
+                else:
+                    containment_result = "CONTAINMENT_PARTIAL_NO_MANAGEABLE_CRITICAL_ROLE"
+
         if event_log_id is not None:
-            log = await session.scalar(select(SecurityEventLog).where(SecurityEventLog.id == event_log_id))
+            log = await session.scalar(
+                select(SecurityEventLog).where(SecurityEventLog.id == event_log_id)
+            )
             if log is not None:
-                log.status = "CONTAINED" if containment_success else "CONTAINMENT_FAILED"
+                log.status = containment_result
                 log.action_taken = "; ".join(actions) if actions else "LOCKDOWN_STATE_ONLY"
-            await self.persistence.mark_contained(session, event_log_id, success=containment_success)
+            await self.persistence.mark_contained(
+                session,
+                event_log_id,
+                success=containment_success,
+            )
 
         await session.commit()
-        return "; ".join(actions) if actions else "LOCKDOWN_STATE_ONLY"
+        return "; ".join(actions) if actions else containment_result
