@@ -38,6 +38,40 @@ async def test_recovery_orchestrator_processes_priority_order() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recovery_orchestrator_coalesces_duplicate_resource_jobs() -> None:
+    orchestrator = RecoveryOrchestrator()
+    processed: list[RecoveryJob] = []
+
+    async def fake_execute(job: RecoveryJob) -> None:
+        processed.append(job)
+        await pytest.importorskip("asyncio").sleep(0)
+
+    orchestrator._execute = fake_execute  # type: ignore[method-assign]
+
+    await orchestrator.start()
+    try:
+        first = await orchestrator.enqueue(
+            guild_id=1,
+            resource_type="CHANNEL",
+            resource_id=101,
+            reason="first event",
+        )
+        duplicate = await orchestrator.enqueue(
+            guild_id=1,
+            resource_type="CHANNEL",
+            resource_id=101,
+            reason="duplicate event",
+        )
+        assert first is True
+        assert duplicate is False
+
+        await orchestrator._queue.join()
+        assert len(processed) == 1
+    finally:
+        await orchestrator.stop()
+
+
+@pytest.mark.asyncio
 async def test_recovery_orchestrator_stops_accepting_jobs_after_stop() -> None:
     orchestrator = RecoveryOrchestrator()
     await orchestrator.start()
