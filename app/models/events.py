@@ -22,6 +22,9 @@ class SecurityEventLog(Base):
     actor_discord_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     target_discord_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     audit_log_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    incident_id: Mapped[int | None] = mapped_column(
+        ForeignKey("security_incidents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     risk_score: Mapped[int] = mapped_column(Integer, nullable=False)
     velocity_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     velocity_window_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
@@ -32,7 +35,7 @@ class SecurityEventLog(Base):
 
 
 class SecurityIncident(Base):
-    """Durable incident grouping for high-risk security events."""
+    """Durable incident grouping and lifecycle state for high-risk activity."""
 
     __tablename__ = "security_incidents"
 
@@ -44,7 +47,15 @@ class SecurityIncident(Base):
     severity: Mapped[str] = mapped_column(String(16), index=True)
     risk_score: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="OPEN", index=True)
+    containment_status: Mapped[str] = mapped_column(String(24), nullable=False, default="PENDING")
+    recovery_status: Mapped[str] = mapped_column(String(24), nullable=False, default="NOT_STARTED")
     event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    containment_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    contained_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    recovery_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    recovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
