@@ -14,6 +14,7 @@ class SecurityConfig(Base):
     anti_nuke_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_setup_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_permission_audit_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    permission_enforcement_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     audit_correlation_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     snapshot_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     recovery_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
