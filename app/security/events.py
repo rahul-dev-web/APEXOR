@@ -17,15 +17,26 @@ class SecurityEvent:
     target_id: int | None = None
     actor_id: int | None = None
     protected_target: bool = False
+    audit_log_id: int | None = None
+    event_id: str | None = None
     timestamp: float = field(default_factory=monotonic)
 
     @property
     def fingerprint(self) -> str:
-        # Gateway events do not always expose an audit entry ID. This fingerprint
-        # is intentionally stable for short-lived duplicate-event suppression.
+        """Return a stable identity when Discord gives us one.
+
+        Audit-log IDs are the preferred identity. Gateway events without an
+        audit ID use the event ID when available; otherwise the short-lived
+        fallback deliberately includes the event timestamp bucket.
+        """
+        if self.audit_log_id is not None:
+            return f"audit:{self.guild_id}:{self.audit_log_id}"
+        if self.event_id is not None:
+            return f"gateway:{self.guild_id}:{self.event_id}"
         bucket = int(self.timestamp * 10)
         return ":".join(
             (
+                "fallback",
                 str(self.guild_id),
                 self.event_type.value,
                 str(self.target_id or 0),
