@@ -4,66 +4,46 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~82% of the backend security MVP architecture is now implemented.**
+**Overall: ~86% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
 ### Implemented
 
 - FastAPI API foundation + health endpoint
-- Discord Gateway client foundation with guild/role/channel/guild-update monitoring
-- SQLAlchemy 2.x async PostgreSQL support
-- Supabase/PostgreSQL-compatible database configuration
-- Alembic migration foundation through `0005_recovery_actions`
-- Guild and security configuration persistence
-- Deterministic event normalization and short-window velocity correlation
-- Event fingerprinting / duplicate suppression
-- Baseline risk scoring with protected-resource weighting
-- Audit-log correlation foundation
-- Database-backed protected roles/channels lookup
-- Deterministic emergency lockdown engine
-- Conservative privileged-permission auditing
-- Idempotent guild auto-setup: APXOR security role, security category, alert/critical/audit/recovery channels, protected-resource registration, and initial `PROTECTED` state
-- Server-side capability authorization foundation: owner authority, guild-scoped grants, expiry support, grant/revoke rules, and database uniqueness constraints
-- Authorized APXOR slash-command layer with server-side capability checks
-- Security capability management commands for owner/security operators to grant and revoke APXOR capabilities
-- Channel operations (`/channel create`, `/channel delete`) routed through APXOR authorization
-- Role operations (`/role create`, `/role delete`) routed through APXOR authorization and Discord hierarchy checks
-- Security status command (`/security status`) with guild protection state and score
-- Versioned Discord security snapshots for guilds, roles, and channels, including permission overwrites and recoverable channel/role metadata
-- Event-driven snapshot capture before deletes/updates and after safe creates/updates
-- Snapshot-based recovery engine with auditable recovery actions and idempotent existing-resource checks
-- Dependency-aware recovery: deleted parent categories and roles referenced by channel permission overwrites are reconstructed before the dependent channel
-- Priority-aware recovery orchestrator with a single worker, bounded queue, protected-resource priority, lifecycle management, and a replaceable queue boundary
-- Rate-limit-aware recovery backoff honoring Discord retry delays, bounded retries, request spacing, and transient 5xx retry handling
-- Automatic recovery trigger for high-risk channel/role deletion events
-- Configuration-driven anti-nuke enforcement honoring per-guild enable/disable flags and high/critical/emergency risk thresholds
-- Protected security alert delivery to the APXOR critical channel and, for critical/emergency incidents, the guild owner via DM when enabled
-- Recovery/lockdown feature flags are enforced by the event pipeline
-- **Permission isolation hardening:** owner-safe role enforcement, explicit hierarchy/managed-role/@everyone guards, immediate enforcement after role updates, and periodic 5-minute reconciliation to catch missed Gateway events
-- Startup ordering hardening: auto-setup now completes before the initial permission audit/enforcement pass
-- **Groq advisory threat-analyst foundation** using strict Pydantic validation and JSON-schema structured output; AI remains advisory and cannot execute Discord actions
-- Recovery orchestrator unit tests covering priority ordering and lifecycle behavior
-- Permission policy/enforcement unit tests
-- AI contract/safety tests
-- Docker image + pytest smoke/security-core tests
+- Discord Gateway monitoring for guild, role, channel, audit-log, webhook and integration activity
+- SQLAlchemy 2.x async PostgreSQL support with Supabase-compatible configuration
+- Alembic migrations through `0006_ai_threat_assessments`
+- Guild/security configuration persistence
+- Deterministic event normalization, duplicate suppression and short-window velocity correlation
+- Deterministic privilege-escalation scoring: `ADMINISTRATOR` reaches emergency risk without AI
+- Real-time Discord audit-log Gateway normalization with actor/target/audit-ID correlation
+- Protected-resource lookup and deterministic emergency lockdown
+- Conservative permission auditing and explicit permission enforcement with five-minute reconciliation
+- Idempotent guild auto-setup with protected APXOR security resources
+- Server-side capability authorization with owner authority, guild-scoped grants and expiry support
+- Authorized APXOR slash commands for security, channel and role management
+- Versioned Discord snapshots and dependency-aware, priority-aware, rate-limit-aware recovery
+- Automatic recovery for high-risk channel/role deletion
+- Deterministic incident aggregation in the persistence layer with short correlation windows and severity escalation
+- Protected alert delivery and owner DM escalation for high/critical/emergency detections
+- Advisory Groq threat analysis with strict structured output, input hashing and asynchronous execution
+- Persistent `ai_threat_assessments` audit records for AI analysis
+- AI failure isolation: Groq cannot block deterministic detection, lockdown, notification or recovery
+- Security-core, permission, audit, AI and privilege-escalation unit tests
+- Docker image + GitHub Actions compile/test workflow
 
 ### Not yet implemented
 
-- Complete APXOR command coverage for role editing, channel editing, moderation, snapshots, recovery, and configuration
-- Expanded permission isolation policy for configurable moderation permissions
-- Complete Gateway audit-event coverage and robust actor correlation
-- Role-member assignment restoration
-- Incident aggregation/deduplication beyond event-level incident creation
-- Emergency lockdown state machine beyond the current containment primitive
-- Groq threat analyst runtime integration into the security incident pipeline
-- `/ai` command and AI channel
-- AI analysis persistence and dashboard exposure
+- Complete APXOR command coverage for advanced editing, moderation, snapshots, recovery and configuration
+- Role-member assignment restoration and broader Discord resource recovery verification
+- Full emergency lockdown state machine beyond the current containment primitive
+- `/ai` command and dedicated AI channel
 - Dashboard API
 - Dashboard frontend
 - Production external queue / worker separation
-- Recovery verification hardening and broader Discord resource coverage
-- Chaos/security integration test suite
+- Reconciliation hardening for all eventually-consistent Discord audit/resource cases
+- Full Discord integration/chaos test suite
 
 ## Local setup
 
@@ -79,21 +59,16 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Set at minimum:
+Configure:
 
 ```env
 DISCORD_TOKEN=your_discord_bot_token
 DATABASE_URL=your_postgresql_connection_string
-```
-
-Optional AI configuration:
-
-```env
 GROQ_API_KEY=your_groq_api_key
-GROQ_MODEL=openai/gpt-oss-20b
+GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
 ```
 
-Run API:
+Run the API:
 
 ```bash
 uvicorn app.main:app --reload
@@ -105,110 +80,96 @@ Run tests:
 pytest
 ```
 
-Run database migrations once a PostgreSQL connection is configured:
+Run migrations:
 
 ```bash
 alembic upgrade head
 ```
 
-## AI security boundary
+## Security architecture
 
-Groq is an advisory analyst only. APXOR's deterministic permission policy, event correlation, risk thresholds, lockdown logic, and recovery engine remain authoritative. The AI service returns a validated classification, confidence, explanation, recommended action, and owner-notification suggestion; it has no Discord client access and no tool-execution authority.
+APXOR uses deterministic controls as the root of trust:
 
-Structured output is schema-constrained and validated with Pydantic. If `GROQ_API_KEY` is absent or the provider fails, the security core continues without AI.
+```text
+Discord Gateway + Audit Logs
+            |
+            v
+     Event Normalization
+            |
+            v
+   Permission / Rule Engine
+            |
+            v
+      Risk + Correlation
+            |
+      +-----+-----+
+      |           |
+      v           v
+ Lockdown      Recovery
+      |
+      v
+ Notifications
+      |
+      +----> Groq advisory analysis
+                    |
+                    v
+             AI audit storage
+```
+
+Groq never receives Discord tool access and never authorizes a security mutation. If Groq is unavailable, APXOR continues using deterministic rules.
 
 ## Permission isolation
 
-APXOR treats Discord permissions as the first security boundary. The default critical policy prohibits `ADMINISTRATOR`, `MANAGE_GUILD`, `MANAGE_CHANNELS`, `MANAGE_ROLES`, and `MANAGE_WEBHOOKS` on manageable non-owner roles. The enforcement service never rewrites `@everyone`, managed/integration roles, roles at or above APXOR's highest role, or the guild owner's top role.
+Discord permissions are APXOR's first security boundary. The default critical policy prohibits `ADMINISTRATOR`, `MANAGE_GUILD`, `MANAGE_CHANNELS`, `MANAGE_ROLES`, and `MANAGE_WEBHOOKS` on manageable non-owner roles. Enforcement never rewrites `@everyone`, managed/integration roles, roles at or above APXOR's hierarchy, or the guild owner's top role.
 
-Permission enforcement is intentionally an explicit per-guild configuration switch. When enabled, APXOR enforces immediately after role permission changes and reconciles the guild every five minutes. This catches missed, duplicated, or out-of-order Gateway signals without requiring aggressive continuous REST polling.
+Permission enforcement is configuration-controlled. When enabled, role updates are enforced immediately and the entire guild is reconciled every five minutes.
 
-Existing privileged roles are audited even when enforcement is disabled. APXOR does not silently strip permissions merely because it joined a server; the owner can explicitly enable enforcement with `/security permission-enforcement`.
+## Anti-nuke detection
 
-## Auto-setup behavior
+The deterministic engine tracks both repeated and mixed destructive activity. It also treats privilege grants as first-class security signals:
 
-When APXOR connects to a guild (or joins one), it attempts an idempotent security bootstrap:
+| Signal | Baseline risk |
+|---|---:|
+| `ADMINISTRATOR` grant | 95 / EMERGENCY |
+| `MANAGE_GUILD` / `MANAGE_CHANNELS` / `MANAGE_ROLES` | 85 / HIGH |
+| `MANAGE_WEBHOOKS` | 80 / CRITICAL |
+| Rapid destructive actions | velocity-based escalation |
+| Protected-resource modification | protected-target escalation |
 
-1. Ensure the guild record and security configuration exist.
-2. Create/reuse the `APXOR-SECURITY` role with no destructive Discord permissions.
-3. Create/reuse the `APXOR SECURITY` category.
-4. Create/reuse `#apxor-alerts`, `#apxor-critical`, `#apxor-audit`, and `#apxor-recovery`.
-5. Register the security role/channels as protected resources.
-6. Capture the first recoverable guild/role/channel baseline when snapshots are enabled.
-7. Mark the guild `PROTECTED` only after the bootstrap succeeds.
-8. Run the initial permission audit/enforcement pass after the security configuration is persisted.
+Detection does not depend on AI availability.
 
-**Safety rule:** auto-setup does not silently remove existing administrator or moderation permissions from human roles. Existing privileged roles are audited and logged; enforcement is activated only when the guild configuration enables it.
+## Audit correlation
 
-APXOR must still be invited with the Discord permissions required for the operations it is expected to perform, and its role must be high enough in the guild hierarchy to manage the resources it owns.
+APXOR consumes Discord's real-time audit-log Gateway signal when available and uses REST Audit Logs as a fallback for resource events. Audit IDs become stable fingerprints so duplicate Gateway/resource signals do not trigger duplicate security actions.
 
-## Capability authorization and commands
+## Incident and recovery model
 
-APXOR capabilities are server-side permissions independent of Discord role names. The current command layer exposes:
+High-risk events are grouped into short-lived incidents by guild, actor and attack family. Incident severity escalates deterministically. Recovery uses known-good snapshots and reconstructs Discord state; it cannot resurrect deleted Discord IDs or message history.
 
-- `/security status`
-- `/security grant`
-- `/security revoke`
-- `/security permission-enforcement`
-- `/channel create`
-- `/channel delete`
-- `/role create`
-- `/role delete`
+Recovery is single-worker, priority-aware and rate-limit-aware. Protected security resources receive higher priority.
 
-The owner is the root authority. Non-owners need an explicit, enabled, non-expired capability grant. `/security grant` and `/security revoke` require `SECURITY_MANAGE`, so delegation remains server-side and auditable. Destructive commands additionally require explicit confirmation and Discord role/channel hierarchy checks.
+## AI security boundary
 
-The command tree is synchronized per guild on startup/join so development and newly joined servers receive commands without waiting for global command propagation.
+The Groq threat analyst receives normalized security context only. Its output is schema-constrained and persisted for auditability. AI recommendations are advisory and are never executed as arbitrary Discord operations.
 
-## Snapshot and recovery model
-
-Snapshots are immutable versions keyed by resource identity. The event pipeline deliberately snapshots the **known-good state before updates/deletes**. Safe updates then advance the snapshot to the new state. Suspicious updates do not replace the known-good recovery source with the potentially malicious state.
-
-The current snapshot records:
-
-- guild security metadata
-- role names, permissions, position, colour, hoist and mentionable state
-- channel type, name, parent, position and supported channel settings
-- role/member permission overwrites where the target still exists
-
-Recovery reconstructs state by creating a replacement Discord resource. It does **not** claim to resurrect the original Discord ID or message history. Each top-level recovery attempt is recorded in `recovery_actions` with its source snapshot, status and error state.
-
-Recovery dependencies are ordered at execution time. Before reconstructing a child channel, APXOR restores its deleted parent category and any deleted roles referenced by the channel's permission overwrites. This prevents a partial reconstruction in which the channel exists but its hierarchy or permissions are missing.
-
-High-risk role/channel deletion events are placed onto the priority recovery queue. Protected resources receive higher recovery priority. The current queue is intentionally in-memory for the MVP so the security boundary remains simple; it can later be backed by Redis or Render queue infrastructure. Discord rate-limit responses are respected with bounded retries and request pacing.
-
-## Security principles
-
-1. Discord permissions are the first security boundary.
-2. AI is advisory, never the root of trust.
-3. Gateway events and audit-log correlation are complementary signals.
-4. Security actions must be deterministic and idempotent.
-5. Security snapshots preserve known-good state before potentially destructive mutations.
-6. Recovery reconstructs server state; it cannot resurrect deleted Discord IDs/history.
-7. APXOR reports measurable protection state instead of claiming 100% protection.
-8. Auto-setup is conservative and never silently strips user permissions.
-9. Dashboard/client input is untrusted; privileged operations require server-side authorization.
-10. Recovery is queued and bounded instead of issuing uncontrolled concurrent Discord REST mutations.
-11. Per-guild risk thresholds and feature flags are authoritative for runtime security decisions.
-12. Critical/emergency notifications use protected APXOR channels and owner DM escalation when configured.
-13. APXOR-controlled destructive operations require explicit capability authorization and confirmation.
-14. Recovery dependencies must be reconstructed before dependent resources.
-15. Discord rate limits and transient API failures must be handled with bounded, observable retries.
-16. Groq failures must never disable deterministic security enforcement.
-17. Permission reconciliation is periodic and idempotent so missed Gateway events do not permanently weaken the configured posture.
+The security pipeline launches AI analysis asynchronously after deterministic event persistence, so model latency or failure cannot block containment or recovery.
 
 ## Roadmap
 
 1. Foundation — **implemented**
-2. Discord Gateway — **foundation implemented; coverage expanding**
+2. Discord Gateway — **implemented; reconciliation hardening next**
 3. Database — **implemented**
 4. Auto Setup — **implemented**
-5. Permission Auditor — **implemented; reconciliation hardened**
-6. Capability Authorization — **command wiring implemented; complete command coverage next**
-7. Anti-Nuke Detection — **foundation implemented; configuration/notification hardening implemented; behavior hardening next**
-8. Audit Correlation — **foundation implemented; hardening next**
-9. Snapshots — **event-driven MVP implemented; reconciliation next**
-10. Recovery — **dependency-aware, priority-aware and rate-limit-aware MVP implemented; verification and broader resource coverage next**
-11. Lockdown — **containment primitive implemented; state machine next**
-12. Groq Threat Analyst — **advisory service implemented; runtime integration next**
-13. `/ai` — next
-14. Dashboard — next
+5. Permission Auditor — **implemented; policy expansion next**
+6. Capability Authorization — **implemented; command coverage expanding**
+7. Anti-Nuke Detection — **implemented; integration/behavior hardening next**
+8. Audit Correlation — **real-time Gateway + REST fallback implemented; reconciliation hardening next**
+9. Snapshots — **implemented; broader resource coverage next**
+10. Recovery — **dependency/rate-limit/priority MVP implemented; verification expansion next**
+11. Lockdown — **containment primitive implemented; full state machine next**
+12. Incident Engine — **implemented; richer incident lifecycle next**
+13. Groq Threat Analyst — **runtime + persistence implemented**
+14. `/ai` — **next**
+15. Dashboard API — **next**
+16. Dashboard frontend — **next**
+17. Production/chaos testing — **next**
