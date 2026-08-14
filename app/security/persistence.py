@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +14,8 @@ from app.security.events import Detection
 _HIGH = 60
 _CRITICAL = 80
 _EMERGENCY = 95
+_INCIDENT_WINDOW = timedelta(seconds=30)
+_SEVERITY_RANK = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4, "EMERGENCY": 5}
 
 
 def severity_for(score: int, *, high: int = _HIGH, critical: int = _CRITICAL, emergency: int = _EMERGENCY) -> str:
@@ -26,6 +30,10 @@ def severity_for(score: int, *, high: int = _HIGH, critical: int = _CRITICAL, em
     if score >= 20:
         return "LOW"
     return "INFO"
+
+
+def _higher_severity(left: str, right: str) -> str:
+    return left if _SEVERITY_RANK.get(left, 0) >= _SEVERITY_RANK.get(right, 0) else right
 
 
 class SecurityPersistence:
@@ -95,19 +103,46 @@ class SecurityPersistence:
         await session.flush()
 
         if detection.signal.score >= high_threshold:
-            session.add(
-                SecurityIncident(
-                    incident_key=f"{event.guild_id}:{event.fingerprint}",
-                    guild_id=event.guild_id,
-                    actor_discord_id=event.actor_id,
-                    incident_type=event.event_type.value,
-                    severity=severity,
-                    risk_score=detection.signal.score,
-                    status="OPEN",
-                    event_count=1,
-                    summary=detection.signal.reason,
-                )
-            )
+            await self._upsert_incident(session, detection, severity)
 
         await session.commit()
         return log.id
+
+    async def _upsert_incident(self, session: AsyncSession, detection: Detection, severity: str) -> None:
+        event = detection.event
+        now = datetime.now(timezone.utc)
+        cutoff = now - _INCIDENT_WINDOW
+
+        query = (
+            select(SecurityIncident)
+            .where(
+                SecurityIncident.guild_id == event.guild_id,
+                SecurityIncident.actor_discord_id == event.actor_id,
+                SecurityIncident.status == "OPEN",
+                SecurityIncident.created_at >= cutoff,
+            )
+            .order_by(SecurityIncident.created_at.desc())
+            .limit(1)
+        )
+        incident = await session.scalar(query)
+
+        if incident is not None:
+            incident.event_count += 1
+            incident.risk_score = max(incident.risk_score, detection.signal.score)
+            incident.severity = _higher_severity(incident.severity, severity)
+            incident.summary = f"{incident.event_count} correlated security events; latest={detection.signal.reason}"
+            return
+
+        session.add(
+            SecurityIncident(
+                incident_key=f"{event.guild_id}:{event.fingerprint}",
+                guild_id=event.guild_id,
+                actor_discord_id=event.actor_id,
+                incident_type=event.event_type.value,
+                severity=severity,
+                risk_score=detection.signal.score,
+                status="OPEN",
+                event_count=1,
+                summary=detection.signal.reason,
+            )
+        )
