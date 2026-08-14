@@ -1,3 +1,4 @@
+from app.models.ai import AIThreatAssessment
 from app.models.capabilities import UserCapability
 from app.models.events import SecurityEventLog, SecurityIncident
 from app.models.guild import Guild
@@ -15,4 +16,5 @@ __all__ = [
     "UserCapability",
     "SecuritySnapshot",
     "RecoveryAction",
+    "AIThreatAssessment",
 ]
