@@ -27,8 +27,8 @@ def make_guild(bot_top: Mock, owner_top_id: int = 999) -> Mock:
 
 def test_plan_skips_owner_top_role() -> None:
     bot_top = Mock()
-    bot_top.__ge__ = Mock(return_value=False)
     role = make_role(999, "Owner", discord.Permissions(administrator=True))
+    role.__ge__ = Mock(return_value=False)
     guild = make_guild(bot_top, owner_top_id=999)
 
     action = PermissionEnforcement().plan_role(guild, role)
