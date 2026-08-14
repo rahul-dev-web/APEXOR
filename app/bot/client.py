@@ -5,12 +5,12 @@ import discord
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.constants import SecurityEventType
+from app.core.constants import ProtectionState, SecurityEventType
 from app.database.session import SessionLocal
 from app.models.security import SecurityConfig
 from app.security.audit import AuditLogCorrelator
 from app.security.events import Detection, EventCorrelator, SecurityEvent
-from app.security.lockdown import LockdownEngine
+from app.security.lockdown import LockdownEngine, state_for_risk
 from app.security.notifications import SecurityNotifier
 from app.security.persistence import SecurityPersistence
 from app.security.permissions.audit import PermissionAudit
@@ -222,8 +222,7 @@ class APXORClient(discord.Client):
                 logger.debug("Duplicate security event suppressed: %s", event.fingerprint)
                 return None
 
-            event_log_id = await self.security_persistence.ensure_guild(session, event.guild_id, name=guild.name, owner_id=guild.owner_id)
-            del event_log_id
+            await self.security_persistence.ensure_guild(session, event.guild_id, name=guild.name, owner_id=guild.owner_id)
             persisted_event_id = await self.security_persistence.record(session, detection)
             logger.info("Security event: guild=%s type=%s actor=%s target=%s risk=%d velocity=%d/%ss reason=%s", event.guild_id, event.event_type.value, event.actor_id, event.target_id, detection.signal.score, detection.velocity_count, detection.velocity_window_seconds, detection.signal.reason)
 
@@ -233,6 +232,17 @@ class APXORClient(discord.Client):
             lockdown_threshold = critical_threshold
             if event.protected_target and event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE, SecurityEventType.ROLE_UPDATE}:
                 lockdown_threshold = min(lockdown_threshold, high_threshold)
+
+            # Persist the highest observed protection state before taking
+            # containment actions. State transitions are monotonic; recovery
+            # code is responsible for explicitly leaving containment states.
+            risk_state = state_for_risk(detection.signal.score)
+            await self.lockdown.set_protection_state(
+                session,
+                event.guild_id,
+                risk_state,
+                score=detection.signal.score,
+            )
 
             if detection.signal.score >= lockdown_threshold and (config is None or config.lockdown_enabled):
                 actions = await self.lockdown.enter_lockdown(session, guild, actor_id=event.actor_id, event_log_id=persisted_event_id)
@@ -257,8 +267,3 @@ class APXORClient(discord.Client):
                     logger.critical("RECOVERY QUEUE REJECTED: guild=%s resource=%s/%s risk=%s", event.guild_id, resource_type, event.target_id, detection.signal.score)
 
             return detection
-
-    async def start_bot(self) -> None:
-        if not settings.discord_token:
-            raise RuntimeError("DISCORD_TOKEN is not configured")
-        await self.start(settings.discord_token)
