@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~92% of the backend security MVP architecture is now implemented.**
+**Overall: ~94% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -28,6 +28,8 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Versioned Discord snapshots and dependency-aware, priority-aware, rate-limit-aware recovery
 - Automatic recovery for high-risk channel/role deletion
 - Deterministic incident aggregation in the persistence layer with short correlation windows and severity escalation
+- Durable recovery batch counters so one restored resource cannot resolve a multi-resource incident prematurely
+- Recovery remains `RECOVERING` until the complete expected target set is verified; any failed target keeps the incident open
 - Protected alert delivery and owner DM escalation for high/critical/emergency detections
 - Advisory Groq threat analysis with strict structured output, input hashing and asynchronous execution
 - Persistent `ai_threat_assessments` audit records for AI analysis
@@ -44,11 +46,10 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Complete APXOR command coverage for advanced editing, moderation, snapshots, recovery and configuration
 - `/ai ask` conversational security analyst and dedicated AI channel
 - Role-member assignment restoration and broader Discord resource recovery verification
-- Full recovery lifecycle orchestration through the protection state machine
-- Dashboard end-user authentication/session layer and frontend
 - Production external queue / worker separation
 - Reconciliation hardening for all eventually-consistent Discord audit/resource cases
 - Full Discord integration/chaos test suite
+- Dashboard end-user authentication/session layer and frontend
 - Production observability, alerting and deployment verification
 
 ## Local setup
@@ -183,7 +184,7 @@ APXOR consumes Discord's real-time audit-log Gateway signal when available and u
 
 High-risk events are grouped into short-lived incidents by guild, actor and attack family. Incident severity escalates deterministically. Recovery uses known-good snapshots and reconstructs Discord state; it cannot resurrect deleted Discord IDs or message history.
 
-Recovery is single-worker, priority-aware and rate-limit-aware. Protected security resources receive higher priority.
+Recovery is single-worker, priority-aware and rate-limit-aware. Protected security resources receive higher priority. Multi-resource recovery is tracked as a durable batch: APXOR counts unique destructive targets, keeps the incident open while siblings remain pending, and only transitions to `PROTECTED` after the complete batch is verified. A failed target keeps the incident in `RECOVERY_FAILED`/open state for follow-up recovery.
 
 ## Protection state lifecycle
 
@@ -216,9 +217,9 @@ The security pipeline launches AI analysis asynchronously after deterministic ev
 7. Anti-Nuke Detection — **implemented; behavior hardening next**
 8. Audit Correlation — **real-time Gateway + REST fallback implemented; reconciliation hardening next**
 9. Snapshots — **implemented; broader resource coverage next**
-10. Recovery — **dependency/rate-limit/priority MVP implemented; verification expansion next**
-11. Lockdown — **deterministic state machine + Gateway runtime integration implemented; full recovery lifecycle next**
-12. Incident Engine — **implemented; richer incident lifecycle next**
+10. Recovery — **dependency/rate-limit/priority MVP + durable batch lifecycle implemented; broader resource verification next**
+11. Lockdown — **deterministic state machine + Gateway runtime + batch-aware recovery lifecycle implemented**
+12. Incident Engine — **implemented; recovery batch accounting added**
 13. Groq Threat Analyst — **runtime + persistence implemented**
 14. `/ai` — **status + incident implemented; conversational interface next**
 15. Dashboard API — **read-only security API implemented; end-user auth next**
