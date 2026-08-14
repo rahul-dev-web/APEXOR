@@ -15,6 +15,9 @@ class AuditMatch:
     action: str
 
 
+# discord.py 2.x exposes moderation audit actions as ``ban`` and ``unban``.
+# Keep the mapping explicit so importing this module cannot fail on supported
+# discord.py releases because of legacy/non-existent action names.
 _ACTIONS: dict[SecurityEventType, tuple[discord.AuditLogAction, ...]] = {
     SecurityEventType.CHANNEL_CREATE: (discord.AuditLogAction.channel_create,),
     SecurityEventType.CHANNEL_UPDATE: (discord.AuditLogAction.channel_update,),
@@ -24,8 +27,8 @@ _ACTIONS: dict[SecurityEventType, tuple[discord.AuditLogAction, ...]] = {
     SecurityEventType.ROLE_DELETE: (discord.AuditLogAction.role_delete,),
     SecurityEventType.GUILD_UPDATE: (discord.AuditLogAction.guild_update,),
     SecurityEventType.KICK: (discord.AuditLogAction.kick,),
-    SecurityEventType.BAN_ADD: (discord.AuditLogAction.ban_add,),
-    SecurityEventType.BAN_REMOVE: (discord.AuditLogAction.ban_remove,),
+    SecurityEventType.BAN_ADD: (discord.AuditLogAction.ban,),
+    SecurityEventType.BAN_REMOVE: (discord.AuditLogAction.unban,),
 }
 
 _OPTIONAL_ACTION_NAMES: dict[SecurityEventType, tuple[str, ...]] = {
