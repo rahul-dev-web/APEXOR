@@ -4,9 +4,11 @@ import logging
 import discord
 from sqlalchemy import select
 
+from app.ai.threat_analyst import ThreatAnalyst
 from app.core.config import settings
 from app.core.constants import SecurityEventType
 from app.database.session import SessionLocal
+from app.models.ai import AIThreatAssessment
 from app.models.security import SecurityConfig
 from app.security.audit import AuditLogCorrelator
 from app.security.events import Detection, EventCorrelator, SecurityEvent
@@ -44,6 +46,7 @@ class APXORClient(discord.Client):
         self.auto_setup = GuildAutoSetup()
         self.snapshots = SnapshotService()
         self.recovery_orchestrator = RecoveryOrchestrator()
+        self.threat_analyst = ThreatAnalyst()
 
     async def setup_hook(self) -> None:
         bind_discord_client(self)
@@ -197,6 +200,36 @@ class APXORClient(discord.Client):
             logger.exception("Security persistence failed; detection remains in-memory: guild=%s fingerprint=%s", detection.event.guild_id, detection.event.fingerprint)
             return None
 
+    async def _run_ai_analysis(self, detection: Detection, event_log_id: int | None) -> None:
+        """Run advisory AI analysis outside the critical security path."""
+        if not self.threat_analyst.enabled or SessionLocal is None:
+            return
+        result = await self.threat_analyst.analyze(detection)
+        if result is None:
+            return
+
+        assessment, input_hash, latency_ms = result
+        try:
+            async with SessionLocal() as session:
+                session.add(
+                    AIThreatAssessment(
+                        guild_id=detection.event.guild_id,
+                        event_log_id=event_log_id,
+                        model=settings.groq_model,
+                        prompt_version="threat-analyst-v1",
+                        input_hash=input_hash,
+                        classification=assessment.classification,
+                        confidence=assessment.confidence,
+                        reason=assessment.reason,
+                        recommended_action=assessment.recommended_action,
+                        notify_owner=assessment.notify_owner,
+                        latency_ms=round(latency_ms),
+                    )
+                )
+                await session.commit()
+        except Exception:
+            logger.exception("Failed to persist Groq threat assessment: guild=%s event=%s", detection.event.guild_id, event_log_id)
+
     async def _process_security_event(self, event: SecurityEvent, guild: discord.Guild) -> Detection | None:
         if SessionLocal is None:
             logger.warning("Security event skipped because database is not configured: guild=%s", event.guild_id)
@@ -233,6 +266,11 @@ class APXORClient(discord.Client):
             lockdown_threshold = critical_threshold
             if event.protected_target and event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE, SecurityEventType.ROLE_UPDATE}:
                 lockdown_threshold = min(lockdown_threshold, high_threshold)
+
+            # AI is deliberately launched after persistence but does not block
+            # containment, notification, or recovery below.
+            if detection.signal.score >= high_threshold:
+                asyncio.create_task(self._run_ai_analysis(detection, persisted_event_id))
 
             if detection.signal.score >= lockdown_threshold and (config is None or config.lockdown_enabled):
                 actions = await self.lockdown.enter_lockdown(session, guild, actor_id=event.actor_id, event_log_id=persisted_event_id)
