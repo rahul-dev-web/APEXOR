@@ -128,12 +128,14 @@ class SnapshotService:
                 }
             )
 
+        parent = channel.category
         data: dict[str, Any] = {
             "id": channel.id,
             "name": channel.name,
             "type": channel.type.value,
             "position": channel.position,
             "parent_id": channel.category_id,
+            "parent_name": parent.name if parent is not None else None,
             "overwrites": overwrites,
         }
         if isinstance(channel, discord.TextChannel):
