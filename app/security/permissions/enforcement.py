@@ -15,13 +15,7 @@ class EnforcementAction:
 
 
 class PermissionEnforcement:
-    """Safely removes APXOR-prohibited permissions from manageable roles.
-
-    Enforcement is deliberately conservative: the guild owner's top role,
-    @everyone, managed/integration roles, and roles at/above APXOR's highest
-    role are never mutated. Discord's role hierarchy remains a hard safety
-    boundary.
-    """
+    """Safely removes APXOR-prohibited permissions from manageable roles."""
 
     def __init__(self, policy: PermissionPolicy = DEFAULT_PERMISSION_POLICY) -> None:
         self.policy = policy
@@ -37,7 +31,8 @@ class PermissionEnforcement:
             return EnforcementAction(role.id, role.name, "SKIPPED", reason="@everyone is never rewritten")
         if role.managed:
             return EnforcementAction(role.id, role.name, "SKIPPED", reason="Managed/integration role")
-        if role >= guild.me.top_role:
+        bot_member = guild.me
+        if bot_member is None or role >= bot_member.top_role:
             return EnforcementAction(role.id, role.name, "SKIPPED", reason="Role is at or above APXOR hierarchy")
         owner = guild.get_member(guild.owner_id) if guild.owner_id else None
         if owner is not None and role.id == owner.top_role.id:
@@ -54,28 +49,18 @@ class PermissionEnforcement:
             "Critical Discord permissions are prohibited for non-owner operator roles",
         )
 
+    async def enforce_role(self, guild: discord.Guild, role: discord.Role, *, reason: str) -> EnforcementAction:
+        action = self.plan_role(guild, role)
+        if action.status != "READY":
+            return action
+        try:
+            await role.edit(permissions=self._target_permissions(role), reason=reason)
+            return EnforcementAction(role.id, role.name, "ENFORCED", action.removed_permissions, action.reason)
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            return EnforcementAction(role.id, role.name, "FAILED", action.removed_permissions, f"{action.reason}; {type(exc).__name__}")
+
     async def enforce_guild(self, guild: discord.Guild, *, reason: str = "APXOR permission policy enforcement") -> list[EnforcementAction]:
         actions: list[EnforcementAction] = []
         for role in guild.roles:
-            action = self.plan_role(guild, role)
-            if action.status != "READY":
-                actions.append(action)
-                continue
-            try:
-                await role.edit(permissions=self._target_permissions(role), reason=reason)
-                actions.append(EnforcementAction(
-                    role.id,
-                    role.name,
-                    "ENFORCED",
-                    action.removed_permissions,
-                    action.reason,
-                ))
-            except (discord.Forbidden, discord.HTTPException) as exc:
-                actions.append(EnforcementAction(
-                    role.id,
-                    role.name,
-                    "FAILED",
-                    action.removed_permissions,
-                    f"{action.reason}; {type(exc).__name__}",
-                ))
+            actions.append(await self.enforce_role(guild, role, reason=reason))
         return actions
