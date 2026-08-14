@@ -10,7 +10,6 @@ from sqlalchemy import select
 
 from app.database.session import SessionLocal
 from app.models.events import SecurityIncident
-from app.security.persistence import incident_family
 from app.security.recovery import RecoveryEngine
 
 logger = logging.getLogger(__name__)
