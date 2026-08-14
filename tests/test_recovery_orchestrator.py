@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app.security.recovery_orchestrator import RecoveryJob, RecoveryOrchestrator
@@ -44,7 +46,7 @@ async def test_recovery_orchestrator_coalesces_duplicate_resource_jobs() -> None
 
     async def fake_execute(job: RecoveryJob) -> None:
         processed.append(job)
-        await pytest.importorskip("asyncio").sleep(0)
+        await asyncio.sleep(0)
 
     orchestrator._execute = fake_execute  # type: ignore[method-assign]
 
