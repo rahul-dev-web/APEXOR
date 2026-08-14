@@ -8,8 +8,10 @@ from datetime import datetime, timezone
 import discord
 from sqlalchemy import select
 
+from app.core.constants import ProtectionState
 from app.database.session import SessionLocal
 from app.models.events import SecurityIncident
+from app.security.lockdown import LockdownEngine
 from app.security.recovery import RecoveryEngine
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,9 @@ class RecoveryOrchestrator:
     job is queued or executing. The queue is intentionally in-memory for the MVP
     and can later be replaced by Redis/Render queue infrastructure without
     changing callers.
+
+    The orchestrator also owns the durable protection lifecycle around recovery:
+    LOCKDOWN/HIGH_RISK -> RECOVERING -> PROTECTED/DEGRADED/RECOVERY_FAILED.
     """
 
     def __init__(
@@ -48,6 +53,7 @@ class RecoveryOrchestrator:
         self._worker: asyncio.Task[None] | None = None
         self._stopping = False
         self._recovery = RecoveryEngine()
+        self._lockdown = LockdownEngine()
         self._max_attempts = max(1, max_attempts)
         self._recovery_spacing = max(0.0, recovery_spacing)
         self._retry_cap = max(0.1, retry_cap)
@@ -73,7 +79,6 @@ class RecoveryOrchestrator:
             except asyncio.CancelledError:
                 pass
             self._worker = None
-        # Cancelled jobs must not permanently block future recovery attempts.
         self._pending_keys.clear()
         logger.info("Recovery orchestrator stopped")
 
@@ -217,36 +222,109 @@ class RecoveryOrchestrator:
                 incident.recovery_started_at = incident.recovery_started_at or datetime.now(timezone.utc)
                 incident.updated_at = datetime.now(timezone.utc)
                 await session.flush()
-                await session.commit()
 
-            action = await self._recovery.restore_resource(
+            # Recovery is a stateful security operation. Enter RECOVERING before
+            # touching Discord so a process restart or later low-risk event cannot
+            # make the dashboard falsely report PROTECTED while reconstruction is
+            # still in progress.
+            recovery_started = await self._lockdown.begin_recovery(
                 session,
-                guild,
-                resource_type=job.resource_type,
-                resource_id=job.resource_id,
-                reason=job.reason,
+                job.guild_id,
+                score=100,
             )
-            now = datetime.now(timezone.utc)
-            if incident is not None:
-                if action.status == "VERIFIED":
-                    incident.recovery_status = "VERIFIED"
-                    incident.recovered_at = now
-                    incident.status = "RESOLVED"
-                    incident.resolved_at = now
-                elif action.status in {"FAILED", "VERIFICATION_FAILED"}:
+            if not recovery_started:
+                logger.error(
+                    "Recovery state transition rejected: guild=%s resource=%s/%s",
+                    job.guild_id,
+                    job.resource_type,
+                    job.resource_id,
+                )
+                if incident is not None:
                     incident.recovery_status = "FAILED"
-                incident.updated_at = now
+                    incident.status = "OPEN"
+                    incident.updated_at = datetime.now(timezone.utc)
+                    await session.commit()
+                return
+
+            await session.commit()
+
+            try:
+                action = await self._recovery.restore_resource(
+                    session,
+                    guild,
+                    resource_type=job.resource_type,
+                    resource_id=job.resource_id,
+                    reason=job.reason,
+                )
+                now = datetime.now(timezone.utc)
+
+                if incident is not None:
+                    incident.recovery_status = "VERIFIED" if action.status == "VERIFIED" else "FAILED"
+                    if action.status == "VERIFIED":
+                        incident.recovered_at = now
+                        incident.status = "RESOLVED"
+                        incident.resolved_at = now
+                    else:
+                        incident.status = "OPEN"
+                    incident.updated_at = now
+
+                if action.status == "VERIFIED":
+                    await self._lockdown.complete_recovery(
+                        session,
+                        job.guild_id,
+                        score=0,
+                    )
+                elif action.status in {"FAILED", "VERIFICATION_FAILED"}:
+                    await self._lockdown.mark_recovery_failed(
+                        session,
+                        job.guild_id,
+                        score=100,
+                    )
+                else:
+                    await self._lockdown.set_protection_state(
+                        session,
+                        job.guild_id,
+                        ProtectionState.DEGRADED,
+                        score=60,
+                    )
+
                 await session.commit()
 
-            logger.info(
-                "Recovery completed: guild=%s resource=%s/%s status=%s restored=%s incident=%s",
-                job.guild_id,
-                job.resource_type,
-                job.resource_id,
-                action.status,
-                action.restored_resource_id,
-                incident.incident_key if incident is not None else None,
-            )
+                logger.info(
+                    "Recovery completed: guild=%s resource=%s/%s status=%s restored=%s incident=%s protection=%s",
+                    job.guild_id,
+                    job.resource_type,
+                    job.resource_id,
+                    action.status,
+                    action.restored_resource_id,
+                    incident.incident_key if incident is not None else None,
+                    ProtectionState.PROTECTED.value if action.status == "VERIFIED" else ProtectionState.RECOVERY_FAILED.value,
+                )
+            except Exception:
+                await session.rollback()
+                # Best-effort persistence of the failure state. Do not hide the
+                # original recovery exception from the retry layer.
+                try:
+                    async with SessionLocal() as failure_session:
+                        failed_incident = await self._find_recovery_incident(failure_session, job)
+                        if failed_incident is not None:
+                            failed_incident.recovery_status = "FAILED"
+                            failed_incident.status = "OPEN"
+                            failed_incident.updated_at = datetime.now(timezone.utc)
+                        await self._lockdown.mark_recovery_failed(
+                            failure_session,
+                            job.guild_id,
+                            score=100,
+                        )
+                        await failure_session.commit()
+                except Exception:
+                    logger.exception(
+                        "Could not persist recovery failure state: guild=%s resource=%s/%s",
+                        job.guild_id,
+                        job.resource_type,
+                        job.resource_id,
+                    )
+                raise
 
     @staticmethod
     async def _find_recovery_incident(session, job: RecoveryJob) -> SecurityIncident | None:
@@ -263,8 +341,6 @@ class RecoveryOrchestrator:
         )
 
 
-# Injected by APXORClient at startup. Keeping the orchestrator independent from
-# discord.Client avoids a circular dependency between security and bot layers.
 _discord_client: discord.Client | None = None
 
 
