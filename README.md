@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~45% of the backend security MVP architecture is now implemented.**
+**Overall: ~55% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -14,7 +14,7 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Discord Gateway client foundation with guild/role/channel/guild-update monitoring
 - SQLAlchemy 2.x async PostgreSQL support
 - Supabase/PostgreSQL-compatible database configuration
-- Alembic migration foundation + security/event/capability schemas
+- Alembic migration foundation through `0005_recovery_actions`
 - Guild and security configuration persistence
 - Deterministic event normalization and short-window velocity correlation
 - Event fingerprinting / duplicate suppression
@@ -23,8 +23,10 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Database-backed protected roles/channels lookup
 - Deterministic emergency lockdown engine
 - Conservative privileged-permission auditing
-- **Idempotent guild auto-setup**: APXOR security role, security category, alert/critical/audit/recovery channels, protected-resource registration, and initial `PROTECTED` state
-- **Server-side capability authorization foundation**: owner authority, guild-scoped grants, expiry support, grant/revoke rules, and database uniqueness constraints
+- Idempotent guild auto-setup: APXOR security role, security category, alert/critical/audit/recovery channels, protected-resource registration, and initial `PROTECTED` state
+- Server-side capability authorization foundation: owner authority, guild-scoped grants, expiry support, grant/revoke rules, and database uniqueness constraints
+- **Versioned Discord security snapshots** for guilds, roles, and channels, including permission overwrites and recoverable channel/role metadata
+- **Snapshot-based recovery engine foundation** with auditable recovery actions and idempotent existing-resource checks
 - Docker image + pytest smoke/security-core tests
 
 ### Not yet implemented
@@ -32,8 +34,9 @@ This is an engineering progress estimate, not a claim that the bot is production
 - APXOR slash-command authorization wiring (`/channel`, `/role`, moderation commands)
 - Complete Discord permission isolation/enforcement policy
 - Complete Gateway audit-event coverage and robust actor correlation
-- Continuous versioned Discord snapshots
-- Channel/role state reconstruction and recovery queue
+- Event-driven snapshot refresh on every mutation/delete event
+- Full channel/role recovery orchestration, dependency ordering, and recovery queue
+- Role-member assignment restoration
 - Incident aggregation and owner notification delivery
 - Emergency lockdown state machine beyond the current containment primitive
 - Groq threat analyst / structured AI decisions
@@ -91,11 +94,25 @@ When APXOR connects to a guild (or joins one), it attempts an idempotent securit
 3. Create/reuse the `APXOR SECURITY` category.
 4. Create/reuse `#apxor-alerts`, `#apxor-critical`, `#apxor-audit`, and `#apxor-recovery`.
 5. Register the security role/channels as protected resources.
-6. Mark the guild `PROTECTED` only after the bootstrap succeeds.
+6. Capture the first recoverable guild/role/channel baseline when snapshots are enabled.
+7. Mark the guild `PROTECTED` only after the bootstrap succeeds.
 
 **Safety rule:** auto-setup does not silently remove existing administrator or moderation permissions from human roles. Existing privileged roles are audited and logged; permission enforcement will be an explicit next phase.
 
 APXOR must still be invited with the Discord permissions required for the operations it is expected to perform, and its role must be high enough in the guild hierarchy to manage the resources it owns.
+
+## Snapshot and recovery model
+
+Snapshots are immutable versions keyed by resource identity. The current implementation records:
+
+- guild security metadata
+- role names, permissions, position, colour, hoist and mentionable state
+- channel type, name, parent, position and supported channel settings
+- role/member permission overwrites where the target still exists
+
+Recovery reconstructs state by creating a replacement Discord resource. It does **not** claim to resurrect the original Discord ID or message history. Each recovery attempt is recorded in `recovery_actions` with its source snapshot, status and error state.
+
+The current baseline is captured during auto-setup. Event-driven refresh and ordered multi-resource recovery are the next hardening steps.
 
 ## Capability authorization
 
@@ -131,8 +148,8 @@ The next step is wiring these gates into actual APXOR slash commands and dashboa
 6. Capability Authorization — **foundation implemented; command/API wiring next**
 7. Anti-Nuke Detection — **foundation implemented; hardening next**
 8. Audit Correlation — **foundation implemented; hardening next**
-9. Snapshots — next
-10. Recovery — next
+9. Snapshots — **baseline implemented; event-driven refresh next**
+10. Recovery — **engine foundation implemented; orchestration next**
 11. Lockdown — **containment primitive implemented**
 12. Groq Threat Analyst — next
 13. Dashboard — next
