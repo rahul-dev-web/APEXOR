@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     database_url: str = ""
 
     groq_api_key: str = ""
-    groq_model: str = ""
+    groq_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
 
     model_config = SettingsConfigDict(
         env_file=".env",
