@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import discord
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.constants import ProtectionState
 from app.database.session import SessionLocal
-from app.models.events import SecurityIncident
+from app.models.events import SecurityEventLog, SecurityIncident
 from app.security.lockdown import LockdownEngine
 from app.security.recovery import RecoveryEngine
 
@@ -36,8 +36,11 @@ class RecoveryOrchestrator:
     and can later be replaced by Redis/Render queue infrastructure without
     changing callers.
 
-    The orchestrator also owns the durable protection lifecycle around recovery:
-    LOCKDOWN/HIGH_RISK -> RECOVERING -> PROTECTED/DEGRADED/RECOVERY_FAILED.
+    Incident completion is batch-aware: one successfully recreated channel or
+    role can never resolve the whole incident while sibling recovery jobs remain
+    pending. Durable counters survive worker restarts and keep the protection
+    state in RECOVERING/RECOVERY_FAILED until the complete recovery batch has
+    been verified.
     """
 
     def __init__(
@@ -221,6 +224,7 @@ class RecoveryOrchestrator:
                 incident.recovery_status = "IN_PROGRESS"
                 incident.recovery_started_at = incident.recovery_started_at or datetime.now(timezone.utc)
                 incident.updated_at = datetime.now(timezone.utc)
+                await self._initialize_recovery_batch(session, incident, job)
                 await session.flush()
 
             # Recovery is a stateful security operation. Enter RECOVERING before
@@ -241,6 +245,7 @@ class RecoveryOrchestrator:
                 )
                 if incident is not None:
                     incident.recovery_status = "FAILED"
+                    incident.recovery_failed_count += 1
                     incident.status = "OPEN"
                     incident.updated_at = datetime.now(timezone.utc)
                     await session.commit()
@@ -259,22 +264,42 @@ class RecoveryOrchestrator:
                 now = datetime.now(timezone.utc)
 
                 if incident is not None:
-                    incident.recovery_status = "VERIFIED" if action.status == "VERIFIED" else "FAILED"
                     if action.status == "VERIFIED":
+                        incident.recovery_completed_count += 1
+                    elif action.status in {"FAILED", "VERIFICATION_FAILED"}:
+                        incident.recovery_failed_count += 1
+                    incident.updated_at = now
+                    await self._refresh_recovery_batch_expectation(session, incident, job)
+
+                    batch_complete = (
+                        incident.recovery_expected_count > 0
+                        and incident.recovery_completed_count >= incident.recovery_expected_count
+                        and incident.recovery_failed_count == 0
+                    )
+                    batch_failed = incident.recovery_failed_count > 0
+
+                    if batch_complete:
+                        incident.recovery_status = "VERIFIED"
                         incident.recovered_at = now
                         incident.status = "RESOLVED"
                         incident.resolved_at = now
-                    else:
+                    elif batch_failed:
+                        incident.recovery_status = "FAILED"
                         incident.status = "OPEN"
-                    incident.updated_at = now
+                    else:
+                        incident.recovery_status = "IN_PROGRESS"
+                        incident.status = "OPEN"
+                else:
+                    batch_complete = action.status == "VERIFIED"
+                    batch_failed = action.status in {"FAILED", "VERIFICATION_FAILED"}
 
-                if action.status == "VERIFIED":
+                if batch_complete:
                     await self._lockdown.complete_recovery(
                         session,
                         job.guild_id,
                         score=0,
                     )
-                elif action.status in {"FAILED", "VERIFICATION_FAILED"}:
+                elif batch_failed:
                     await self._lockdown.mark_recovery_failed(
                         session,
                         job.guild_id,
@@ -284,21 +309,26 @@ class RecoveryOrchestrator:
                     await self._lockdown.set_protection_state(
                         session,
                         job.guild_id,
-                        ProtectionState.DEGRADED,
-                        score=60,
+                        ProtectionState.RECOVERING,
+                        score=100,
                     )
 
                 await session.commit()
 
                 logger.info(
-                    "Recovery completed: guild=%s resource=%s/%s status=%s restored=%s incident=%s protection=%s",
+                    "Recovery completed: guild=%s resource=%s/%s status=%s restored=%s incident=%s batch=%s/%s failed=%s protection=%s",
                     job.guild_id,
                     job.resource_type,
                     job.resource_id,
                     action.status,
                     action.restored_resource_id,
                     incident.incident_key if incident is not None else None,
-                    ProtectionState.PROTECTED.value if action.status == "VERIFIED" else ProtectionState.RECOVERY_FAILED.value,
+                    incident.recovery_completed_count if incident is not None else int(batch_complete),
+                    incident.recovery_expected_count if incident is not None else 1,
+                    incident.recovery_failed_count if incident is not None else int(batch_failed),
+                    ProtectionState.PROTECTED.value if batch_complete else (
+                        ProtectionState.RECOVERY_FAILED.value if batch_failed else ProtectionState.RECOVERING.value
+                    ),
                 )
             except Exception:
                 await session.rollback()
@@ -309,6 +339,7 @@ class RecoveryOrchestrator:
                         failed_incident = await self._find_recovery_incident(failure_session, job)
                         if failed_incident is not None:
                             failed_incident.recovery_status = "FAILED"
+                            failed_incident.recovery_failed_count += 1
                             failed_incident.status = "OPEN"
                             failed_incident.updated_at = datetime.now(timezone.utc)
                         await self._lockdown.mark_recovery_failed(
@@ -325,6 +356,46 @@ class RecoveryOrchestrator:
                         job.resource_id,
                     )
                 raise
+
+    @staticmethod
+    async def _initialize_recovery_batch(session, incident: SecurityIncident, job: RecoveryJob) -> None:
+        """Set the expected unique recovery target count for the incident."""
+        if incident.recovery_expected_count > 0:
+            return
+        expected = await session.scalar(
+            select(func.count(func.distinct(SecurityEventLog.target_discord_id))).where(
+                SecurityEventLog.incident_id == incident.id,
+                SecurityEventLog.target_discord_id.is_not(None),
+            )
+        )
+        incident.recovery_expected_count = max(int(expected or 0), 1)
+        logger.info(
+            "Recovery batch initialized: incident=%s expected=%s first=%s/%s",
+            incident.incident_key,
+            incident.recovery_expected_count,
+            job.resource_type,
+            job.resource_id,
+        )
+
+    @staticmethod
+    async def _refresh_recovery_batch_expectation(session, incident: SecurityIncident, job: RecoveryJob) -> None:
+        """Grow the expected count if additional destructive targets joined the incident."""
+        expected = await session.scalar(
+            select(func.count(func.distinct(SecurityEventLog.target_discord_id))).where(
+                SecurityEventLog.incident_id == incident.id,
+                SecurityEventLog.target_discord_id.is_not(None),
+            )
+        )
+        observed = max(int(expected or 0), 1)
+        if observed > incident.recovery_expected_count:
+            incident.recovery_expected_count = observed
+            logger.info(
+                "Recovery batch expanded: incident=%s expected=%s after=%s/%s",
+                incident.incident_key,
+                observed,
+                job.resource_type,
+                job.resource_id,
+            )
 
     @staticmethod
     async def _find_recovery_incident(session, job: RecoveryJob) -> SecurityIncident | None:
