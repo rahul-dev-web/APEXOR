@@ -9,7 +9,7 @@ from app.security.audit import event_from_audit_entry, event_type_for_audit_acti
 def test_known_audit_action_maps_to_security_event() -> None:
     assert event_type_for_audit_action(discord.AuditLogAction.channel_delete) is SecurityEventType.CHANNEL_DELETE
     assert event_type_for_audit_action(discord.AuditLogAction.role_update) is SecurityEventType.ROLE_UPDATE
-    assert event_type_for_audit_action(discord.AuditLogAction.ban_add) is SecurityEventType.BAN_ADD
+    assert event_type_for_audit_action(discord.AuditLogAction.ban) is SecurityEventType.BAN_ADD
     assert event_type_for_audit_action(discord.AuditLogAction.kick) is SecurityEventType.KICK
 
 
