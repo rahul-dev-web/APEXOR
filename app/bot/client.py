@@ -17,6 +17,7 @@ from app.security.protected import ProtectedResourceService
 from app.security.recovery_orchestrator import RecoveryOrchestrator, bind_discord_client
 from app.security.setup import GuildAutoSetup
 from app.security.snapshots import SnapshotService
+from app.bot.commands import APXORCommandTree
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ class APXORClient(discord.Client):
         intents = discord.Intents.none()
         intents.guilds = True
         super().__init__(intents=intents)
+        self.tree = APXORCommandTree(self)
+        self._commands_synced = False
         self.permission_audit = PermissionAudit()
         self.event_correlator = EventCorrelator(window_seconds=10.0)
         self.audit_correlator = AuditLogCorrelator(limit=10)
@@ -51,12 +54,24 @@ class APXORClient(discord.Client):
     async def on_ready(self) -> None:
         logger.info("APXOR connected as %s (%s)", self.user, self.user.id if self.user else "unknown")
         logger.info("Connected guilds: %d", len(self.guilds))
+        if not self._commands_synced:
+            for guild in self.guilds:
+                try:
+                    await self.tree.sync(guild=guild)
+                    logger.info("Synced APXOR commands to guild=%s", guild.id)
+                except discord.HTTPException:
+                    logger.exception("Failed to sync APXOR commands to guild=%s", guild.id)
+            self._commands_synced = True
         for guild in self.guilds:
             self._log_permission_findings(guild)
             await self._run_auto_setup(guild)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         logger.info("APXOR joined guild %s (%s)", guild.name, guild.id)
+        try:
+            await self.tree.sync(guild=guild)
+        except discord.HTTPException:
+            logger.exception("Failed to sync APXOR commands to joined guild=%s", guild.id)
         self._log_permission_findings(guild)
         await self._run_auto_setup(guild)
 
@@ -217,9 +232,7 @@ class APXORClient(discord.Client):
                     notification_enabled=config.notification_enabled if config else True,
                 )
 
-            if (
-                config is None or config.recovery_enabled
-            ) and event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE} and detection.signal.score >= high_threshold:
+            if (config is None or config.recovery_enabled) and event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE} and detection.signal.score >= high_threshold:
                 resource_type = "CHANNEL" if event.event_type == SecurityEventType.CHANNEL_DELETE else "ROLE"
                 priority = 10 if event.protected_target else 50
                 queued = await self.recovery_orchestrator.enqueue(
