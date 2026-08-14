@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~40% of the backend security MVP architecture is now implemented.**
+**Overall: ~45% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -14,7 +14,7 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Discord Gateway client foundation with guild/role/channel/guild-update monitoring
 - SQLAlchemy 2.x async PostgreSQL support
 - Supabase/PostgreSQL-compatible database configuration
-- Alembic migration foundation + initial security/event schemas
+- Alembic migration foundation + security/event/capability schemas
 - Guild and security configuration persistence
 - Deterministic event normalization and short-window velocity correlation
 - Event fingerprinting / duplicate suppression
@@ -24,12 +24,13 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Deterministic emergency lockdown engine
 - Conservative privileged-permission auditing
 - **Idempotent guild auto-setup**: APXOR security role, security category, alert/critical/audit/recovery channels, protected-resource registration, and initial `PROTECTED` state
+- **Server-side capability authorization foundation**: owner authority, guild-scoped grants, expiry support, grant/revoke rules, and database uniqueness constraints
 - Docker image + pytest smoke/security-core tests
 
 ### Not yet implemented
 
-- Capability authorization and APXOR-mediated operator commands
-- Full Discord permission isolation/enforcement policy
+- APXOR slash-command authorization wiring (`/channel`, `/role`, moderation commands)
+- Complete Discord permission isolation/enforcement policy
 - Complete Gateway audit-event coverage and robust actor correlation
 - Continuous versioned Discord snapshots
 - Channel/role state reconstruction and recovery queue
@@ -96,6 +97,19 @@ When APXOR connects to a guild (or joins one), it attempts an idempotent securit
 
 APXOR must still be invited with the Discord permissions required for the operations it is expected to perform, and its role must be high enough in the guild hierarchy to manage the resources it owns.
 
+## Capability authorization
+
+APXOR capabilities are server-side permissions independent of Discord role names. The authorization service currently supports:
+
+- owner bypass based on the persisted guild owner ID
+- explicit guild-scoped user grants
+- capability expiry timestamps
+- deterministic grant/revoke checks
+- `SECURITY_MANAGE` delegation for non-owner security operators
+- database uniqueness to prevent duplicate active grants
+
+The next step is wiring these gates into actual APXOR slash commands and dashboard APIs. The browser/UI must never be treated as the authorization boundary.
+
 ## Security principles
 
 1. Discord permissions are the first security boundary.
@@ -105,6 +119,7 @@ APXOR must still be invited with the Discord permissions required for the operat
 5. Recovery reconstructs server state; it cannot resurrect deleted Discord IDs/history.
 6. APXOR reports measurable protection state instead of claiming 100% protection.
 7. Auto-setup is conservative and never silently strips user permissions.
+8. Dashboard/client input is untrusted; privileged operations require server-side authorization.
 
 ## Roadmap
 
@@ -113,7 +128,7 @@ APXOR must still be invited with the Discord permissions required for the operat
 3. Database — **implemented**
 4. Auto Setup — **implemented**
 5. Permission Auditor — **foundation implemented**
-6. Capability Authorization — next
+6. Capability Authorization — **foundation implemented; command/API wiring next**
 7. Anti-Nuke Detection — **foundation implemented; hardening next**
 8. Audit Correlation — **foundation implemented; hardening next**
 9. Snapshots — next
