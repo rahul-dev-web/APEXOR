@@ -94,3 +94,26 @@ def test_duplicate_event_is_not_counted_twice() -> None:
 
     assert first.velocity_count == 1
     assert duplicate.velocity_count == 0
+
+
+def test_audit_log_id_is_stable_across_gateway_replays() -> None:
+    correlator = EventCorrelator(window_seconds=10)
+    first = SecurityEvent(
+        guild_id=1,
+        actor_id=42,
+        target_id=99,
+        event_type=SecurityEventType.CHANNEL_DELETE,
+        audit_log_id=777,
+        timestamp=10.0,
+    )
+    replay = SecurityEvent(
+        guild_id=1,
+        actor_id=42,
+        target_id=99,
+        event_type=SecurityEventType.CHANNEL_DELETE,
+        audit_log_id=777,
+        timestamp=10.5,
+    )
+
+    assert correlator.process(first, now=10.0).velocity_count == 1
+    assert correlator.process(replay, now=10.5).velocity_count == 0
