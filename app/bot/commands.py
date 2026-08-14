@@ -4,10 +4,14 @@ from datetime import timedelta
 
 import discord
 from discord import app_commands
-from sqlalchemy import select
+from sqlalchemy import desc, select
 
+from app.ai.threat_analyst import ThreatAnalyst
+from app.core.config import settings
 from app.core.constants import Capability
 from app.database.session import SessionLocal
+from app.models.ai import AIThreatAssessment
+from app.models.events import SecurityIncident
 from app.models.guild import Guild
 from app.models.security import SecurityChannel, SecurityConfig, SecurityRole
 from app.security.authorization import AuthorizationService
@@ -308,6 +312,75 @@ class ModerationGroup(app_commands.Group):
         await interaction.response.send_message(f"Timed out {member.mention} for {duration_minutes} minute(s).", ephemeral=True)
 
 
+class AIGroup(app_commands.Group):
+    """Read-only AI security surfaces; AI remains advisory."""
+
+    def __init__(self) -> None:
+        super().__init__(name="ai", description="Inspect APXOR advisory AI security analysis")
+        self._analyst = ThreatAnalyst()
+
+    @app_commands.command(name="status", description="Show APXOR AI availability and latest analysis")
+    async def status(self, interaction: discord.Interaction) -> None:
+        if not await _authorized(interaction, Capability.SECURITY_VIEW):
+            return
+        if interaction.guild is None or SessionLocal is None:
+            await interaction.response.send_message("Database is unavailable.", ephemeral=True)
+            return
+        async with SessionLocal() as session:
+            latest = await session.scalar(
+                select(AIThreatAssessment)
+                .where(AIThreatAssessment.guild_id == interaction.guild.id)
+                .order_by(desc(AIThreatAssessment.created_at))
+            )
+        embed = discord.Embed(title="APXOR AI Security", color=discord.Color.blurple())
+        embed.add_field(name="Provider", value="Groq", inline=True)
+        embed.add_field(name="Runtime", value="AVAILABLE" if self._analyst.enabled else "DEGRADED", inline=True)
+        embed.add_field(name="Model", value=settings.groq_model or "not configured", inline=False)
+        if latest:
+            embed.add_field(name="Latest classification", value=latest.classification, inline=True)
+            embed.add_field(name="Confidence", value=f"{latest.confidence:.0%}", inline=True)
+            embed.add_field(name="Recommendation", value=latest.recommended_action, inline=True)
+            embed.add_field(name="Reason", value=latest.reason[:1024], inline=False)
+        else:
+            embed.add_field(name="Latest analysis", value="No persisted AI assessment yet.", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="incident", description="Show the latest incident and its advisory AI assessment")
+    async def incident(self, interaction: discord.Interaction) -> None:
+        if not await _authorized(interaction, Capability.SECURITY_VIEW):
+            return
+        if interaction.guild is None or SessionLocal is None:
+            await interaction.response.send_message("Database is unavailable.", ephemeral=True)
+            return
+        async with SessionLocal() as session:
+            incident = await session.scalar(
+                select(SecurityIncident)
+                .where(SecurityIncident.guild_id == interaction.guild.id)
+                .order_by(desc(SecurityIncident.created_at))
+            )
+            latest_ai = await session.scalar(
+                select(AIThreatAssessment)
+                .where(AIThreatAssessment.guild_id == interaction.guild.id)
+                .order_by(desc(AIThreatAssessment.created_at))
+            )
+        if incident is None:
+            await interaction.response.send_message("No security incidents have been recorded yet.", ephemeral=True)
+            return
+        embed = discord.Embed(title=f"APXOR Incident {incident.incident_key}", color=discord.Color.red() if incident.severity in {"CRITICAL", "EMERGENCY"} else discord.Color.orange())
+        embed.add_field(name="Type", value=incident.incident_type, inline=True)
+        embed.add_field(name="Severity", value=incident.severity, inline=True)
+        embed.add_field(name="Risk", value=f"{incident.risk_score}/100", inline=True)
+        embed.add_field(name="Status", value=incident.status, inline=True)
+        embed.add_field(name="Events", value=str(incident.event_count), inline=True)
+        embed.add_field(name="Actor", value=f"<@{incident.actor_discord_id}>" if incident.actor_discord_id else "Unknown", inline=True)
+        embed.add_field(name="Summary", value=incident.summary[:1024], inline=False)
+        if latest_ai:
+            embed.add_field(name="AI classification", value=f"{latest_ai.classification} ({latest_ai.confidence:.0%})", inline=True)
+            embed.add_field(name="AI recommendation", value=latest_ai.recommended_action, inline=True)
+            embed.add_field(name="AI reason", value=latest_ai.reason[:1024], inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 class APXORCommandTree(app_commands.CommandTree):
     def __init__(self, client: discord.Client) -> None:
         super().__init__(client)
@@ -315,3 +388,4 @@ class APXORCommandTree(app_commands.CommandTree):
         self.add_command(ChannelGroup())
         self.add_command(RoleGroup())
         self.add_command(ModerationGroup())
+        self.add_command(AIGroup())
