@@ -46,40 +46,39 @@ class SecurityPersistence:
             guild.name = name[:100]
             guild.owner_discord_id = owner_id
 
-    async def record(self, session: AsyncSession, detection: Detection) -> bool:
+    async def record(self, session: AsyncSession, detection: Detection) -> int | None:
         event = detection.event
         existing = await session.scalar(
-            select(SecurityEventLog.id).where(
+            select(SecurityEventLog).where(
                 SecurityEventLog.guild_id == event.guild_id,
                 SecurityEventLog.fingerprint == event.fingerprint,
             )
         )
         if existing is not None:
-            return False
+            return None
 
         severity = severity_for(detection.signal.score)
-        session.add(
-            SecurityEventLog(
-                guild_id=event.guild_id,
-                fingerprint=event.fingerprint,
-                event_type=event.event_type.value,
-                severity=severity,
-                actor_discord_id=event.actor_id,
-                target_discord_id=event.target_id,
-                audit_log_id=event.audit_log_id,
-                risk_score=detection.signal.score,
-                velocity_count=detection.velocity_count,
-                velocity_window_seconds=int(detection.velocity_window_seconds),
-                reason=detection.signal.reason,
-                status="OBSERVED",
-            )
+        log = SecurityEventLog(
+            guild_id=event.guild_id,
+            fingerprint=event.fingerprint,
+            event_type=event.event_type.value,
+            severity=severity,
+            actor_discord_id=event.actor_id,
+            target_discord_id=event.target_id,
+            audit_log_id=event.audit_log_id,
+            risk_score=detection.signal.score,
+            velocity_count=detection.velocity_count,
+            velocity_window_seconds=int(detection.velocity_window_seconds),
+            reason=detection.signal.reason,
+            status="OBSERVED",
         )
+        session.add(log)
+        await session.flush()
 
         if detection.signal.score >= _HIGH:
-            incident_key = f"{event.guild_id}:{event.fingerprint}"
             session.add(
                 SecurityIncident(
-                    incident_key=incident_key,
+                    incident_key=f"{event.guild_id}:{event.fingerprint}",
                     guild_id=event.guild_id,
                     actor_discord_id=event.actor_id,
                     incident_type=event.event_type.value,
@@ -92,4 +91,4 @@ class SecurityPersistence:
             )
 
         await session.commit()
-        return True
+        return log.id
