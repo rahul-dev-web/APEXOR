@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import monotonic
 
 from app.core.constants import SecurityEventType
@@ -17,7 +17,7 @@ class SecurityEvent:
     target_id: int | None = None
     actor_id: int | None = None
     protected_target: bool = False
-    timestamp: float = 0.0
+    timestamp: float = field(default_factory=monotonic)
 
     @property
     def fingerprint(self) -> str:
@@ -56,7 +56,7 @@ class EventCorrelator:
         self.window_seconds = window_seconds
         self.max_events = max_events
         self._actor_events: dict[tuple[int, int, SecurityEventType], deque[float]] = defaultdict(deque)
-        self._seen: dict[int, float] = {}
+        self._seen: dict[str, float] = {}
 
     def process(self, event: SecurityEvent, *, now: float | None = None) -> Detection:
         current = monotonic() if now is None else now
@@ -78,8 +78,6 @@ class EventCorrelator:
                 bucket.popleft()
             count = len(bucket)
 
-        # Velocity escalation is deterministic and additive. These thresholds
-        # are intentionally conservative and can be tuned after attack tests.
         velocity_bonus = self._velocity_bonus(event.event_type, count)
         combined = RiskSignal(
             score=min(signal.score + velocity_bonus, 100),
