@@ -7,21 +7,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import ProtectionState
-from app.models.guild import Guild
 from app.models.events import SecurityEventLog
+from app.models.guild import Guild
 from app.security.permissions.policy import DEFAULT_PERMISSION_POLICY
 
 logger = logging.getLogger(__name__)
 
 
 class LockdownEngine:
-    """Deterministic containment layer for high-risk incidents.
-
-    The engine never attempts to modify the guild owner or roles above the bot.
-    For a known non-owner actor, it can remove APXOR-defined critical permissions
-    from manageable roles that the actor currently holds. Guild protection state
-    is persisted independently so database/audit processing can be reconciled.
-    """
+    """Deterministic containment layer for high-risk incidents."""
 
     def __init__(self) -> None:
         self.policy = DEFAULT_PERMISSION_POLICY
@@ -40,11 +34,14 @@ class LockdownEngine:
             db_guild.protection_score = 100
 
         actions: list[str] = []
-        if actor_id is not None:
+        bot_member = guild.me
+        bot_top_role = bot_member.top_role if bot_member is not None else None
+
+        if actor_id is not None and bot_top_role is not None:
             member = guild.get_member(actor_id)
             if member is not None and member.id != guild.owner_id:
                 for role in member.roles:
-                    if role.is_default() or role >= guild.me.top_role:
+                    if role.is_default() or role >= bot_top_role:
                         continue
                     current = role.permissions
                     critical = {
