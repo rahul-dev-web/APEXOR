@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.events import SecurityEventLog, SecurityIncident
+from app.security.events import Detection
+
+
+_HIGH = 60
+_CRITICAL = 80
+_EMERGENCY = 95
+
+
+def severity_for(score: int) -> str:
+    if score >= _EMERGENCY:
+        return "EMERGENCY"
+    if score >= _CRITICAL:
+        return "CRITICAL"
+    if score >= _HIGH:
+        return "HIGH"
+    if score >= 40:
+        return "MEDIUM"
+    if score >= 20:
+        return "LOW"
+    return "INFO"
+
+
+class SecurityPersistence:
+    """Persist normalized detections without making DB availability a security dependency."""
+
+    async def record(self, session: AsyncSession, detection: Detection) -> bool:
+        event = detection.event
+        existing = await session.scalar(
+            select(SecurityEventLog.id).where(
+                SecurityEventLog.guild_id == event.guild_id,
+                SecurityEventLog.fingerprint == event.fingerprint,
+            )
+        )
+        if existing is not None:
+            return False
+
+        severity = severity_for(detection.signal.score)
+        session.add(
+            SecurityEventLog(
+                guild_id=event.guild_id,
+                fingerprint=event.fingerprint,
+                event_type=event.event_type.value,
+                severity=severity,
+                actor_discord_id=event.actor_id,
+                target_discord_id=event.target_id,
+                audit_log_id=event.audit_log_id,
+                risk_score=detection.signal.score,
+                velocity_count=detection.velocity_count,
+                velocity_window_seconds=int(detection.velocity_window_seconds),
+                reason=detection.signal.reason,
+                status="OBSERVED",
+            )
+        )
+
+        if detection.signal.score >= _HIGH:
+            incident_key = f"{event.guild_id}:{event.fingerprint}"
+            session.add(
+                SecurityIncident(
+                    incident_key=incident_key,
+                    guild_id=event.guild_id,
+                    actor_discord_id=event.actor_id,
+                    incident_type=event.event_type.value,
+                    severity=severity,
+                    risk_score=detection.signal.score,
+                    status="OPEN",
+                    event_count=1,
+                    summary=detection.signal.reason,
+                )
+            )
+
+        await session.commit()
+        return True
