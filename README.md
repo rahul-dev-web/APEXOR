@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~62% of the backend security MVP architecture is now implemented.**
+**Overall: ~66% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -30,6 +30,7 @@ This is an engineering progress estimate, not a claim that the bot is production
 - **Snapshot-based recovery engine** with auditable recovery actions and idempotent existing-resource checks
 - **Priority-aware recovery orchestrator** with a single worker, bounded queue, protected-resource priority, lifecycle management, and a replaceable queue boundary
 - **Automatic recovery trigger** for high-risk channel/role deletion events
+- **Deterministic incident aggregation** with actor/type correlation, bounded time windows, severity escalation, protected-resource weighting, and database upsert persistence
 - **Recovery orchestrator unit tests** covering priority ordering and lifecycle behavior
 - Docker image + pytest smoke/security-core tests
 
@@ -40,7 +41,7 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Complete Gateway audit-event coverage and robust actor correlation
 - Multi-resource recovery dependency ordering (category → channel → permissions)
 - Role-member assignment restoration
-- Incident aggregation and owner notification delivery
+- Owner DM / dashboard notification delivery
 - Emergency lockdown state machine beyond the current containment primitive
 - Groq threat analyst / structured AI decisions
 - `/ai` command and AI channel
@@ -120,6 +121,12 @@ Recovery reconstructs state by creating a replacement Discord resource. It does 
 
 High-risk role/channel deletion events are placed onto the priority recovery queue. Protected resources receive higher recovery priority. The current queue is intentionally in-memory for the MVP so the security boundary remains simple; it can later be backed by Redis or Render queue infrastructure.
 
+## Incident model
+
+High-risk detections are also grouped into short-lived incidents before persistence. Events are correlated by guild, actor, and incident type inside a bounded window. Destructive activity and privilege escalation are classified separately, and protected-resource involvement increases the incident score. The incident aggregate is persisted by stable incident key rather than creating a separate incident row for every event.
+
+The incident engine is deterministic and independent of Groq. AI will later provide contextual analysis on top of this trusted aggregate; it will not decide whether an incident exists.
+
 ## Capability authorization
 
 APXOR capabilities are server-side permissions independent of Discord role names. The authorization service currently supports:
@@ -145,6 +152,7 @@ The next step is wiring these gates into actual APXOR slash commands and dashboa
 8. Auto-setup is conservative and never silently strips user permissions.
 9. Dashboard/client input is untrusted; privileged operations require server-side authorization.
 10. Recovery is queued and bounded instead of issuing uncontrolled concurrent Discord REST mutations.
+11. Incident aggregation is deterministic; AI is not the security root of trust.
 
 ## Roadmap
 
@@ -158,6 +166,7 @@ The next step is wiring these gates into actual APXOR slash commands and dashboa
 8. Audit Correlation — **foundation implemented; hardening next**
 9. Snapshots — **event-driven MVP implemented; reconciliation next**
 10. Recovery — **engine + priority orchestration implemented; dependency/rate-limit hardening next**
-11. Lockdown — **containment primitive implemented**
-12. Groq Threat Analyst — next
-13. Dashboard — next
+11. Incident Engine — **deterministic aggregation implemented; notification/escalation next**
+12. Lockdown — **containment primitive implemented**
+13. Groq Threat Analyst — next
+14. Dashboard — next
