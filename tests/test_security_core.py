@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import discord
 
 from app.core.constants import SecurityEventType
+from app.security.events import EventCorrelator, SecurityEvent
 from app.security.permissions.audit import PermissionAudit
 from app.security.risk import combine_signals, score_event
 
@@ -54,3 +55,42 @@ def test_risk_score_is_capped_at_100() -> None:
     ]
 
     assert combine_signals(signals) == 100
+
+
+def test_channel_delete_velocity_escalates_deterministically() -> None:
+    correlator = EventCorrelator(window_seconds=10)
+    detections = [
+        correlator.process(
+            SecurityEvent(
+                guild_id=1,
+                actor_id=42,
+                target_id=index,
+                event_type=SecurityEventType.CHANNEL_DELETE,
+            ),
+            now=float(index),
+        )
+        for index in range(1, 6)
+    ]
+
+    assert detections[0].velocity_count == 1
+    assert detections[2].velocity_count == 3
+    assert detections[2].signal.score == 45
+    assert detections[4].velocity_count == 5
+    assert detections[4].signal.score == 65
+
+
+def test_duplicate_event_is_not_counted_twice() -> None:
+    correlator = EventCorrelator(window_seconds=10)
+    event = SecurityEvent(
+        guild_id=1,
+        actor_id=42,
+        target_id=99,
+        event_type=SecurityEventType.CHANNEL_DELETE,
+        timestamp=10.0,
+    )
+
+    first = correlator.process(event, now=10.0)
+    duplicate = correlator.process(event, now=10.0)
+
+    assert first.velocity_count == 1
+    assert duplicate.velocity_count == 0
