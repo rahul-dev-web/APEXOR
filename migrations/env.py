@@ -9,11 +9,14 @@ from app.core.config import settings
 from app.database.base import Base
 from app.models import (
     Guild,
+    RecoveryAction,
     SecurityChannel,
     SecurityConfig,
     SecurityEventLog,
     SecurityIncident,
     SecurityRole,
+    SecuritySnapshot,
+    UserCapability,
 )  # noqa: F401
 
 config = context.config
