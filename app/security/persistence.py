@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.events import SecurityEventLog, SecurityIncident
 from app.models.guild import Guild
+from app.models.security import SecurityConfig
 from app.security.events import Detection
 
 
@@ -51,9 +52,9 @@ class SecurityPersistence:
         session: AsyncSession,
         detection: Detection,
         *,
-        high_threshold: int = _HIGH,
-        critical_threshold: int = _CRITICAL,
-        emergency_threshold: int = _EMERGENCY,
+        high_threshold: int | None = None,
+        critical_threshold: int | None = None,
+        emergency_threshold: int | None = None,
     ) -> int | None:
         event = detection.event
         existing = await session.scalar(
@@ -64,6 +65,11 @@ class SecurityPersistence:
         )
         if existing is not None:
             return None
+
+        config = await session.scalar(select(SecurityConfig).where(SecurityConfig.guild_id == event.guild_id))
+        high_threshold = high_threshold if high_threshold is not None else (config.risk_threshold_high if config else _HIGH)
+        critical_threshold = critical_threshold if critical_threshold is not None else (config.risk_threshold_critical if config else _CRITICAL)
+        emergency_threshold = emergency_threshold if emergency_threshold is not None else (config.risk_threshold_emergency if config else _EMERGENCY)
 
         severity = severity_for(
             detection.signal.score,
