@@ -13,12 +13,12 @@ _CRITICAL = 80
 _EMERGENCY = 95
 
 
-def severity_for(score: int) -> str:
-    if score >= _EMERGENCY:
+def severity_for(score: int, *, high: int = _HIGH, critical: int = _CRITICAL, emergency: int = _EMERGENCY) -> str:
+    if score >= emergency:
         return "EMERGENCY"
-    if score >= _CRITICAL:
+    if score >= critical:
         return "CRITICAL"
-    if score >= _HIGH:
+    if score >= high:
         return "HIGH"
     if score >= 40:
         return "MEDIUM"
@@ -46,7 +46,15 @@ class SecurityPersistence:
             guild.name = name[:100]
             guild.owner_discord_id = owner_id
 
-    async def record(self, session: AsyncSession, detection: Detection) -> int | None:
+    async def record(
+        self,
+        session: AsyncSession,
+        detection: Detection,
+        *,
+        high_threshold: int = _HIGH,
+        critical_threshold: int = _CRITICAL,
+        emergency_threshold: int = _EMERGENCY,
+    ) -> int | None:
         event = detection.event
         existing = await session.scalar(
             select(SecurityEventLog).where(
@@ -57,7 +65,12 @@ class SecurityPersistence:
         if existing is not None:
             return None
 
-        severity = severity_for(detection.signal.score)
+        severity = severity_for(
+            detection.signal.score,
+            high=high_threshold,
+            critical=critical_threshold,
+            emergency=emergency_threshold,
+        )
         log = SecurityEventLog(
             guild_id=event.guild_id,
             fingerprint=event.fingerprint,
@@ -75,7 +88,7 @@ class SecurityPersistence:
         session.add(log)
         await session.flush()
 
-        if detection.signal.score >= _HIGH:
+        if detection.signal.score >= high_threshold:
             session.add(
                 SecurityIncident(
                     incident_key=f"{event.guild_id}:{event.fingerprint}",
