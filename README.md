@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~70% of the backend security MVP architecture is now implemented.**
+**Overall: ~75% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -33,7 +33,9 @@ This is an engineering progress estimate, not a claim that the bot is production
 - **Versioned Discord security snapshots** for guilds, roles, and channels, including permission overwrites and recoverable channel/role metadata
 - **Event-driven snapshot capture** before deletes/updates and after safe creates/updates
 - **Snapshot-based recovery engine** with auditable recovery actions and idempotent existing-resource checks
+- **Dependency-aware recovery**: deleted parent categories and roles referenced by channel permission overwrites are reconstructed before the dependent channel
 - **Priority-aware recovery orchestrator** with a single worker, bounded queue, protected-resource priority, lifecycle management, and a replaceable queue boundary
+- **Rate-limit-aware recovery backoff** honoring Discord retry delays, bounded retries, request spacing, and transient 5xx retry handling
 - **Automatic recovery trigger** for high-risk channel/role deletion events
 - **Configuration-driven anti-nuke enforcement** honoring per-guild enable/disable flags and high/critical/emergency risk thresholds
 - **Protected security alert delivery** to the APXOR critical channel and, for critical/emergency incidents, the guild owner via DM when enabled
@@ -46,7 +48,6 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Complete APXOR command coverage for role editing, channel editing, moderation, snapshots, recovery, and configuration
 - Complete Discord permission isolation/enforcement policy
 - Complete Gateway audit-event coverage and robust actor correlation
-- Multi-resource recovery dependency ordering (category → channel → permissions)
 - Role-member assignment restoration
 - Incident aggregation/deduplication beyond event-level incident creation
 - Emergency lockdown state machine beyond the current containment primitive
@@ -55,7 +56,7 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Dashboard API
 - Dashboard frontend
 - Production external queue / worker separation
-- Discord API rate-limit aware recovery backoff and verification hardening
+- Recovery verification hardening and broader Discord resource coverage
 - Chaos/security integration test suite
 
 ## Local setup
@@ -140,9 +141,11 @@ The current snapshot records:
 - channel type, name, parent, position and supported channel settings
 - role/member permission overwrites where the target still exists
 
-Recovery reconstructs state by creating a replacement Discord resource. It does **not** claim to resurrect the original Discord ID or message history. Each recovery attempt is recorded in `recovery_actions` with its source snapshot, status and error state.
+Recovery reconstructs state by creating a replacement Discord resource. It does **not** claim to resurrect the original Discord ID or message history. Each top-level recovery attempt is recorded in `recovery_actions` with its source snapshot, status and error state.
 
-High-risk role/channel deletion events are placed onto the priority recovery queue. Protected resources receive higher recovery priority. The current queue is intentionally in-memory for the MVP so the security boundary remains simple; it can later be backed by Redis or Render queue infrastructure.
+Recovery dependencies are ordered at execution time. Before reconstructing a child channel, APXOR restores its deleted parent category and any deleted roles referenced by the channel's permission overwrites. This prevents a partial reconstruction in which the channel exists but its hierarchy or permissions are missing.
+
+High-risk role/channel deletion events are placed onto the priority recovery queue. Protected resources receive higher recovery priority. The current queue is intentionally in-memory for the MVP so the security boundary remains simple; it can later be backed by Redis or Render queue infrastructure. Discord rate-limit responses are respected with bounded retries and request pacing.
 
 ## Security principles
 
@@ -159,6 +162,8 @@ High-risk role/channel deletion events are placed onto the priority recovery que
 11. Per-guild risk thresholds and feature flags are authoritative for runtime security decisions.
 12. Critical/emergency notifications use protected APXOR channels and owner DM escalation when configured.
 13. APXOR-controlled destructive operations require explicit capability authorization and confirmation.
+14. Recovery dependencies must be reconstructed before dependent resources.
+15. Discord rate limits and transient API failures must be handled with bounded, observable retries.
 
 ## Roadmap
 
@@ -171,7 +176,7 @@ High-risk role/channel deletion events are placed onto the priority recovery que
 7. Anti-Nuke Detection — **foundation implemented; configuration/notification hardening implemented; behavior hardening next**
 8. Audit Correlation — **foundation implemented; hardening next**
 9. Snapshots — **event-driven MVP implemented; reconciliation next**
-10. Recovery — **engine + priority orchestration implemented; dependency/rate-limit hardening next**
+10. Recovery — **dependency-aware, priority-aware and rate-limit-aware MVP implemented; verification and broader resource coverage next**
 11. Lockdown — **containment primitive implemented; state machine next**
 12. Groq Threat Analyst — next
 13. Dashboard — next
