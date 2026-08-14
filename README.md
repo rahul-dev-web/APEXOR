@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~75% of the backend security MVP architecture is now implemented.**
+**Overall: ~78% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -12,6 +12,7 @@ This is an engineering progress estimate, not a claim that the bot is production
 
 - FastAPI API foundation + health endpoint
 - Discord Gateway client foundation with guild/role/channel/guild-update monitoring
+- **Real-time Discord audit-log Gateway monitoring with normalized actor/target events**
 - SQLAlchemy 2.x async PostgreSQL support
 - Supabase/PostgreSQL-compatible database configuration
 - Alembic migration foundation through `0005_recovery_actions`
@@ -41,13 +42,14 @@ This is an engineering progress estimate, not a claim that the bot is production
 - **Protected security alert delivery** to the APXOR critical channel and, for critical/emergency incidents, the guild owner via DM when enabled
 - **Recovery/lockdown feature flags** are enforced by the event pipeline
 - Recovery orchestrator unit tests covering priority ordering and lifecycle behavior
+- **Audit Gateway normalization tests** covering actor/target extraction and event fingerprinting
 - Docker image + pytest smoke/security-core tests
 
 ### Not yet implemented
 
 - Complete APXOR command coverage for role editing, channel editing, moderation, snapshots, recovery, and configuration
 - Complete Discord permission isolation/enforcement policy
-- Complete Gateway audit-event coverage and robust actor correlation
+- Robust audit actor correlation hardening and reconciliation against eventually-consistent/missing audit entries
 - Role-member assignment restoration
 - Incident aggregation/deduplication beyond event-level incident creation
 - Emergency lockdown state machine beyond the current containment primitive
@@ -151,12 +153,12 @@ High-risk role/channel deletion events are placed onto the priority recovery que
 
 1. Discord permissions are the first security boundary.
 2. AI is advisory, never the root of trust.
-3. Gateway events and audit-log correlation are complementary signals.
+3. Gateway resource events and real-time audit-log events are complementary signals.
 4. Security actions must be deterministic and idempotent.
 5. Security snapshots preserve known-good state before potentially destructive mutations.
 6. Recovery reconstructs server state; it cannot resurrect deleted Discord IDs/history.
 7. APXOR reports measurable protection state instead of claiming 100% protection.
-8. Auto-setup is conservative and never silently strips user permissions.
+8. Auto-setup is conservative and never silently strips user permissions unless explicit permission enforcement is enabled.
 9. Dashboard/client input is untrusted; privileged operations require server-side authorization.
 10. Recovery is queued and bounded instead of issuing uncontrolled concurrent Discord REST mutations.
 11. Per-guild risk thresholds and feature flags are authoritative for runtime security decisions.
@@ -164,17 +166,19 @@ High-risk role/channel deletion events are placed onto the priority recovery que
 13. APXOR-controlled destructive operations require explicit capability authorization and confirmation.
 14. Recovery dependencies must be reconstructed before dependent resources.
 15. Discord rate limits and transient API failures must be handled with bounded, observable retries.
+16. Audit-log event IDs are used as stable fingerprints to deduplicate audit and resource Gateway signals.
+17. Missing audit events must never disable the deterministic resource-event detector.
 
 ## Roadmap
 
 1. Foundation — **implemented**
-2. Discord Gateway — **foundation implemented; coverage expanding**
+2. Discord Gateway — **foundation implemented; audit-event coverage now expanded**
 3. Database — **implemented**
 4. Auto Setup — **implemented**
-5. Permission Auditor — **foundation implemented**
+5. Permission Auditor — **foundation implemented; enforcement is configuration-gated**
 6. Capability Authorization — **command wiring implemented; complete command coverage next**
 7. Anti-Nuke Detection — **foundation implemented; configuration/notification hardening implemented; behavior hardening next**
-8. Audit Correlation — **foundation implemented; hardening next**
+8. Audit Correlation — **real-time audit Gateway coverage implemented; reconciliation hardening next**
 9. Snapshots — **event-driven MVP implemented; reconciliation next**
 10. Recovery — **dependency-aware, priority-aware and rate-limit-aware MVP implemented; verification and broader resource coverage next**
 11. Lockdown — **containment primitive implemented; state machine next**
