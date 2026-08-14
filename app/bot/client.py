@@ -13,6 +13,7 @@ from app.security.lockdown import LockdownEngine
 from app.security.persistence import SecurityPersistence
 from app.security.permissions.audit import PermissionAudit
 from app.security.protected import ProtectedResourceService
+from app.security.setup import GuildAutoSetup
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class APXORClient(discord.Client):
         self.security_persistence = SecurityPersistence()
         self.protected_resources = ProtectedResourceService()
         self.lockdown = LockdownEngine()
+        self.auto_setup = GuildAutoSetup()
 
     async def setup_hook(self) -> None:
         logger.info("APXOR Discord client setup initialized")
@@ -45,12 +47,12 @@ class APXORClient(discord.Client):
 
         for guild in self.guilds:
             self._log_permission_findings(guild)
-            await self._ensure_guild_record(guild)
+            await self._run_auto_setup(guild)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         logger.info("APXOR joined guild %s (%s)", guild.name, guild.id)
         self._log_permission_findings(guild)
-        await self._ensure_guild_record(guild)
+        await self._run_auto_setup(guild)
 
     async def on_guild_role_create(self, role: discord.Role) -> None:
         await self._process_security_event(
@@ -102,6 +104,31 @@ class APXORClient(discord.Client):
             SecurityEvent(guild_id=after.id, event_type=SecurityEventType.GUILD_UPDATE),
             after,
         )
+
+    async def _run_auto_setup(self, guild: discord.Guild) -> None:
+        if SessionLocal is None:
+            logger.warning("Auto-setup skipped: database is not configured (guild=%s)", guild.id)
+            return
+        try:
+            async with SessionLocal() as session:
+                config = await session.scalar(
+                    select(SecurityConfig).where(SecurityConfig.guild_id == guild.id)
+                )
+                if config is not None and not config.auto_setup_enabled:
+                    logger.info("Auto-setup disabled for guild=%s", guild.id)
+                    await self._ensure_guild_record(guild)
+                    return
+                await self.auto_setup.ensure(session, guild)
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            logger.error(
+                "Auto-setup could not complete for guild=%s; verify bot permissions and role hierarchy: %s",
+                guild.id,
+                exc,
+            )
+            await self._ensure_guild_record(guild)
+        except Exception:
+            logger.exception("Auto-setup failed for guild=%s", guild.id)
+            await self._ensure_guild_record(guild)
 
     async def _ensure_guild_record(self, guild: discord.Guild) -> None:
         if SessionLocal is None:
