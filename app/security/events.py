@@ -16,6 +16,8 @@ DESTRUCTIVE_EVENTS = frozenset(
         SecurityEventType.ROLE_UPDATE,
         SecurityEventType.GUILD_UPDATE,
         SecurityEventType.MEMBER_REMOVE,
+        SecurityEventType.KICK,
+        SecurityEventType.BAN_ADD,
         SecurityEventType.WEBHOOK_UPDATE,
         SecurityEventType.INTEGRATION_UPDATE,
     }
@@ -43,16 +45,7 @@ class SecurityEvent:
         if self.event_id is not None:
             return f"gateway:{self.guild_id}:{self.event_id}"
         bucket = int(self.timestamp * 10)
-        return ":".join(
-            (
-                "fallback",
-                str(self.guild_id),
-                self.event_type.value,
-                str(self.target_id or 0),
-                str(self.actor_id or 0),
-                str(bucket),
-            )
-        )
+        return ":".join(("fallback", str(self.guild_id), self.event_type.value, str(self.target_id or 0), str(self.actor_id or 0), str(bucket)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,12 +57,7 @@ class Detection:
 
 
 class EventCorrelator:
-    """Deterministic short-window correlator for anti-nuke behavior.
-
-    Per-event-type velocity is retained for precise thresholds, while a second
-    actor-wide destructive bucket detects mixed attacks such as channel deletes
-    followed by role deletes or permission changes.
-    """
+    """Deterministic short-window correlator for anti-nuke behavior."""
 
     def __init__(self, *, window_seconds: float = 10.0, max_events: int = 256) -> None:
         self.window_seconds = window_seconds
@@ -81,7 +69,6 @@ class EventCorrelator:
     def process(self, event: SecurityEvent, *, now: float | None = None) -> Detection:
         current = monotonic() if now is None else now
         self._prune_seen(current)
-
         signal = score_event(event.event_type, protected_target=event.protected_target)
         if event.fingerprint in self._seen:
             return Detection(event, signal, velocity_count=0, velocity_window_seconds=self.window_seconds)
@@ -89,7 +76,6 @@ class EventCorrelator:
         self._seen[event.fingerprint] = current
         count = 1
         mixed_count = 0
-
         if event.actor_id is not None:
             key = (event.guild_id, event.actor_id, event.event_type)
             bucket = self._actor_events[key]
@@ -100,8 +86,7 @@ class EventCorrelator:
             count = len(bucket)
 
             if event.event_type in DESTRUCTIVE_EVENTS:
-                destructive_key = (event.guild_id, event.actor_id)
-                destructive_bucket = self._actor_destructive_events[destructive_key]
+                destructive_bucket = self._actor_destructive_events[(event.guild_id, event.actor_id)]
                 destructive_bucket.append(current)
                 self._prune_bucket(destructive_bucket, current)
                 while len(destructive_bucket) > self.max_events:
@@ -110,18 +95,17 @@ class EventCorrelator:
 
         velocity_bonus = self._velocity_bonus(event.event_type, count)
         mixed_bonus = self._mixed_attack_bonus(mixed_count)
-        total_bonus = min(velocity_bonus + mixed_bonus, 100)
         reasons = signal.reason
         if velocity_bonus:
             reasons += f":velocity_{count}"
         if mixed_bonus:
             reasons += f":destructive_window_{mixed_count}"
-
-        combined = RiskSignal(
-            score=min(signal.score + total_bonus, 100),
-            reason=reasons,
+        return Detection(
+            event,
+            RiskSignal(score=min(signal.score + min(velocity_bonus + mixed_bonus, 100), 100), reason=reasons),
+            count,
+            self.window_seconds,
         )
-        return Detection(event, combined, count, self.window_seconds)
 
     def _velocity_bonus(self, event_type: SecurityEventType, count: int) -> int:
         if event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE}:
@@ -136,9 +120,19 @@ class EventCorrelator:
                 return 30
             if count >= 5:
                 return 15
-        if event_type in {SecurityEventType.ROLE_UPDATE, SecurityEventType.GUILD_UPDATE}:
+        if event_type in {
+            SecurityEventType.ROLE_UPDATE,
+            SecurityEventType.GUILD_UPDATE,
+            SecurityEventType.MEMBER_REMOVE,
+            SecurityEventType.KICK,
+            SecurityEventType.BAN_ADD,
+            SecurityEventType.WEBHOOK_UPDATE,
+            SecurityEventType.INTEGRATION_UPDATE,
+        }:
             if count >= 5:
                 return 25
+            if count >= 3:
+                return 10
         return 0
 
     @staticmethod
