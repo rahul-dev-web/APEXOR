@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
 
+    # Service-to-service authentication for the MVP dashboard API.
+    # End-user OAuth/session authentication belongs to the dashboard frontend phase.
+    dashboard_api_key: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
