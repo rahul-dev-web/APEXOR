@@ -1,6 +1,7 @@
 import logging
 
 import discord
+from discord.ext import tasks
 from sqlalchemy import select
 
 from app.bot.commands import APXORCommandTree
@@ -25,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 class APXORClient(discord.Client):
     """Discord Gateway client for APXOR's deterministic security core."""
+
+    PERMISSION_RECONCILIATION_MINUTES = 5
 
     def __init__(self) -> None:
         intents = discord.Intents.none()
@@ -51,11 +54,28 @@ class APXORClient(discord.Client):
     async def setup_hook(self) -> None:
         bind_discord_client(self)
         await self.recovery_orchestrator.start()
-        logger.info("APXOR Discord client setup initialized; recovery worker online")
+        if not self.permission_reconciliation.is_running():
+            self.permission_reconciliation.start()
+        logger.info("APXOR Discord client setup initialized; recovery worker and permission reconciliation online")
 
     async def close(self) -> None:
+        if self.permission_reconciliation.is_running():
+            self.permission_reconciliation.cancel()
         await self.recovery_orchestrator.stop()
         await super().close()
+
+    @tasks.loop(minutes=PERMISSION_RECONCILIATION_MINUTES)
+    async def permission_reconciliation(self) -> None:
+        """Periodically reconcile permission posture to catch missed Gateway events."""
+        for guild in tuple(self.guilds):
+            try:
+                await self._audit_and_enforce_permissions(guild, reconciliation=True)
+            except Exception:
+                logger.exception("Permission reconciliation failed for guild=%s", guild.id)
+
+    @permission_reconciliation.before_loop
+    async def _wait_for_ready_before_permission_reconciliation(self) -> None:
+        await self.wait_until_ready()
 
     async def on_ready(self) -> None:
         logger.info("APXOR connected as %s (%s)", self.user, self.user.id if self.user else "unknown")
@@ -68,9 +88,11 @@ class APXORClient(discord.Client):
                 except discord.HTTPException:
                     logger.exception("Failed to sync APXOR commands to guild=%s", guild.id)
             self._commands_synced = True
+        # Auto-setup runs first so a newly initialized guild has its persisted
+        # security configuration before permission reconciliation/enforcement.
         for guild in self.guilds:
-            await self._audit_and_enforce_permissions(guild)
             await self._run_auto_setup(guild)
+            await self._audit_and_enforce_permissions(guild)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         logger.info("APXOR joined guild %s (%s)", guild.name, guild.id)
@@ -78,8 +100,8 @@ class APXORClient(discord.Client):
             await self.tree.sync(guild=guild)
         except discord.HTTPException:
             logger.exception("Failed to sync APXOR commands to joined guild=%s", guild.id)
-        await self._audit_and_enforce_permissions(guild)
         await self._run_auto_setup(guild)
+        await self._audit_and_enforce_permissions(guild)
 
     async def on_audit_log_entry_create(self, entry: discord.AuditLogEntry) -> None:
         """Consume Discord's real-time audit-log signal when available."""
@@ -165,25 +187,45 @@ class APXORClient(discord.Client):
         if detection is None or detection.signal.score < 60:
             await self._capture_resource(resource, resource_type, source="EVENT_AFTER_SAFE_UPDATE")
 
-    async def _audit_and_enforce_permissions(self, guild: discord.Guild, *, changed_role: discord.Role | None = None) -> None:
-        findings = self.permission_audit.audit_guild(guild)
-        for finding in findings:
-            logger.warning("Privileged role detected: guild=%s role=%s name=%r severity=%s permissions=%s owner_role=%s", guild.id, finding.role_id, finding.role_name, finding.severity, ",".join(finding.permissions), finding.is_owner_role)
-
+    async def _audit_and_enforce_permissions(self, guild: discord.Guild, *, changed_role: discord.Role | None = None, reconciliation: bool = False) -> None:
         if SessionLocal is None:
             return
         try:
             async with SessionLocal() as session:
                 config = await session.scalar(select(SecurityConfig).where(SecurityConfig.guild_id == guild.id))
-                if config is None or not config.permission_enforcement_enabled:
+                if config is None:
                     return
-            if changed_role is not None:
+                # Enforcement is itself a security audit and must remain active
+                # when explicitly enabled even if passive auditing was disabled.
+                if not config.auto_permission_audit_enabled and not config.permission_enforcement_enabled:
+                    return
+
+            findings = self.permission_audit.audit_guild(guild)
+            for finding in findings:
+                logger.warning(
+                    "Privileged role detected: guild=%s role=%s name=%r severity=%s permissions=%s owner_role=%s",
+                    guild.id,
+                    finding.role_id,
+                    finding.role_name,
+                    finding.severity,
+                    ",".join(finding.permissions),
+                    finding.is_owner_role,
+                )
+
+            if not config.permission_enforcement_enabled:
+                return
+
+            # A direct role-update event can be enforced immediately. Periodic
+            # reconciliation falls back to a full guild sweep and catches missed
+            # or duplicated Gateway events.
+            if changed_role is not None and not reconciliation:
                 action = await self.permission_enforcement.enforce_role(guild, changed_role, reason="APXOR automatic permission enforcement after role update")
                 if action.status == "ENFORCED":
                     logger.critical("Permission enforcement: guild=%s role=%s removed=%s", guild.id, action.role_id, ",".join(action.removed_permissions))
                 elif action.status == "FAILED":
                     logger.error("Permission enforcement failed: guild=%s role=%s reason=%s", guild.id, action.role_id, action.reason)
                 return
+
             actions = await self.permission_enforcement.enforce_guild(guild, reason="APXOR permission posture reconciliation")
             enforced = [a for a in actions if a.status == "ENFORCED"]
             failed = [a for a in actions if a.status == "FAILED"]

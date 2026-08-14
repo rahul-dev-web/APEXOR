@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~78% of the backend security MVP architecture is now implemented.**
+**Overall: ~82% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -40,15 +40,18 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Configuration-driven anti-nuke enforcement honoring per-guild enable/disable flags and high/critical/emergency risk thresholds
 - Protected security alert delivery to the APXOR critical channel and, for critical/emergency incidents, the guild owner via DM when enabled
 - Recovery/lockdown feature flags are enforced by the event pipeline
+- **Permission isolation hardening:** owner-safe role enforcement, explicit hierarchy/managed-role/@everyone guards, immediate enforcement after role updates, and periodic 5-minute reconciliation to catch missed Gateway events
+- Startup ordering hardening: auto-setup now completes before the initial permission audit/enforcement pass
 - **Groq advisory threat-analyst foundation** using strict Pydantic validation and JSON-schema structured output; AI remains advisory and cannot execute Discord actions
 - Recovery orchestrator unit tests covering priority ordering and lifecycle behavior
+- Permission policy/enforcement unit tests
 - AI contract/safety tests
 - Docker image + pytest smoke/security-core tests
 
 ### Not yet implemented
 
 - Complete APXOR command coverage for role editing, channel editing, moderation, snapshots, recovery, and configuration
-- Complete Discord permission isolation/enforcement policy
+- Expanded permission isolation policy for configurable moderation permissions
 - Complete Gateway audit-event coverage and robust actor correlation
 - Role-member assignment restoration
 - Incident aggregation/deduplication beyond event-level incident creation
@@ -114,6 +117,14 @@ Groq is an advisory analyst only. APXOR's deterministic permission policy, event
 
 Structured output is schema-constrained and validated with Pydantic. If `GROQ_API_KEY` is absent or the provider fails, the security core continues without AI.
 
+## Permission isolation
+
+APXOR treats Discord permissions as the first security boundary. The default critical policy prohibits `ADMINISTRATOR`, `MANAGE_GUILD`, `MANAGE_CHANNELS`, `MANAGE_ROLES`, and `MANAGE_WEBHOOKS` on manageable non-owner roles. The enforcement service never rewrites `@everyone`, managed/integration roles, roles at or above APXOR's highest role, or the guild owner's top role.
+
+Permission enforcement is intentionally an explicit per-guild configuration switch. When enabled, APXOR enforces immediately after role permission changes and reconciles the guild every five minutes. This catches missed, duplicated, or out-of-order Gateway signals without requiring aggressive continuous REST polling.
+
+Existing privileged roles are audited even when enforcement is disabled. APXOR does not silently strip permissions merely because it joined a server; the owner can explicitly enable enforcement with `/security permission-enforcement`.
+
 ## Auto-setup behavior
 
 When APXOR connects to a guild (or joins one), it attempts an idempotent security bootstrap:
@@ -125,8 +136,9 @@ When APXOR connects to a guild (or joins one), it attempts an idempotent securit
 5. Register the security role/channels as protected resources.
 6. Capture the first recoverable guild/role/channel baseline when snapshots are enabled.
 7. Mark the guild `PROTECTED` only after the bootstrap succeeds.
+8. Run the initial permission audit/enforcement pass after the security configuration is persisted.
 
-**Safety rule:** auto-setup does not silently remove existing administrator or moderation permissions from human roles. Existing privileged roles are audited and logged; permission enforcement will be an explicit next phase.
+**Safety rule:** auto-setup does not silently remove existing administrator or moderation permissions from human roles. Existing privileged roles are audited and logged; enforcement is activated only when the guild configuration enables it.
 
 APXOR must still be invited with the Discord permissions required for the operations it is expected to perform, and its role must be high enough in the guild hierarchy to manage the resources it owns.
 
@@ -137,6 +149,7 @@ APXOR capabilities are server-side permissions independent of Discord role names
 - `/security status`
 - `/security grant`
 - `/security revoke`
+- `/security permission-enforcement`
 - `/channel create`
 - `/channel delete`
 - `/role create`
@@ -181,6 +194,7 @@ High-risk role/channel deletion events are placed onto the priority recovery que
 14. Recovery dependencies must be reconstructed before dependent resources.
 15. Discord rate limits and transient API failures must be handled with bounded, observable retries.
 16. Groq failures must never disable deterministic security enforcement.
+17. Permission reconciliation is periodic and idempotent so missed Gateway events do not permanently weaken the configured posture.
 
 ## Roadmap
 
@@ -188,7 +202,7 @@ High-risk role/channel deletion events are placed onto the priority recovery que
 2. Discord Gateway — **foundation implemented; coverage expanding**
 3. Database — **implemented**
 4. Auto Setup — **implemented**
-5. Permission Auditor — **foundation implemented**
+5. Permission Auditor — **implemented; reconciliation hardened**
 6. Capability Authorization — **command wiring implemented; complete command coverage next**
 7. Anti-Nuke Detection — **foundation implemented; configuration/notification hardening implemented; behavior hardening next**
 8. Audit Correlation — **foundation implemented; hardening next**
