@@ -2,6 +2,7 @@ import logging
 
 from fastapi import FastAPI
 
+from app.api.dashboard import router as dashboard_router
 from app.core.config import settings
 from app.core.logging import configure_logging
 
@@ -10,9 +11,11 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="APXOR API",
-    version="0.1.0",
+    version="0.2.0",
     description="Security-first Discord anti-nuke platform API.",
 )
+
+app.include_router(dashboard_router)
 
 
 @app.get("/health")
