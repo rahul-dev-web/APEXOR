@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.ai.threat_analyst import ThreatAnalyst
 from app.bot.commands import APXORCommandTree
+from app.bot.recovery_commands import RecoveryGroup
 from app.core.config import settings
 from app.core.constants import SecurityEventType
 from app.database.session import SessionLocal
@@ -40,6 +41,7 @@ class APXORClient(discord.Client):
         intents.moderation = True
         super().__init__(intents=intents)
         self.tree = APXORCommandTree(self)
+        self.tree.add_command(RecoveryGroup())
         self._commands_synced = False
         self.permission_audit = PermissionAudit()
         self.permission_enforcement = PermissionEnforcement()
