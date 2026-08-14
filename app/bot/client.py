@@ -13,7 +13,9 @@ from app.security.lockdown import LockdownEngine
 from app.security.persistence import SecurityPersistence
 from app.security.permissions.audit import PermissionAudit
 from app.security.protected import ProtectedResourceService
+from app.security.recovery_orchestrator import RecoveryOrchestrator, bind_discord_client
 from app.security.setup import GuildAutoSetup
+from app.security.snapshots import SnapshotService
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +35,19 @@ class APXORClient(discord.Client):
         self.protected_resources = ProtectedResourceService()
         self.lockdown = LockdownEngine()
         self.auto_setup = GuildAutoSetup()
+        self.snapshots = SnapshotService()
+        self.recovery_orchestrator = RecoveryOrchestrator()
+        self._recovery_bound = False
 
     async def setup_hook(self) -> None:
-        logger.info("APXOR Discord client setup initialized")
+        bind_discord_client(self)
+        self._recovery_bound = True
+        await self.recovery_orchestrator.start()
+        logger.info("APXOR Discord client setup initialized; recovery worker online")
+
+    async def close(self) -> None:
+        await self.recovery_orchestrator.stop()
+        await super().close()
 
     async def on_ready(self) -> None:
         logger.info(
@@ -55,6 +67,7 @@ class APXORClient(discord.Client):
         await self._run_auto_setup(guild)
 
     async def on_guild_role_create(self, role: discord.Role) -> None:
+        await self._capture_resource(role, "ROLE", source="EVENT_AFTER_CREATE")
         await self._process_security_event(
             SecurityEvent(guild_id=role.guild.id, event_type=SecurityEventType.ROLE_CREATE, target_id=role.id),
             role.guild,
@@ -62,6 +75,9 @@ class APXORClient(discord.Client):
         self._log_permission_findings(role.guild)
 
     async def on_guild_role_update(self, before: discord.Role, after: discord.Role) -> None:
+        # Snapshot the known-good state BEFORE processing the update. If the
+        # update is malicious, recovery can reconstruct the previous state.
+        await self._capture_resource(before, "ROLE", source="EVENT_BEFORE_UPDATE")
         if before.permissions.value != after.permissions.value:
             logger.warning(
                 "Role permission change detected: guild=%s role=%s before=%s after=%s",
@@ -74,6 +90,9 @@ class APXORClient(discord.Client):
         self._log_permission_findings(after.guild)
 
     async def on_guild_role_delete(self, role: discord.Role) -> None:
+        # The delete event still carries the last known role object. Persist it
+        # before detection so the recovery queue has a current source snapshot.
+        await self._capture_resource(role, "ROLE", source="EVENT_BEFORE_DELETE")
         logger.warning("Guild role deleted: guild=%s role=%s name=%s", role.guild.id, role.id, role.name)
         await self._process_security_event(
             SecurityEvent(guild_id=role.guild.id, event_type=SecurityEventType.ROLE_DELETE, target_id=role.id),
@@ -81,18 +100,21 @@ class APXORClient(discord.Client):
         )
 
     async def on_guild_channel_create(self, channel: discord.abc.GuildChannel) -> None:
+        await self._capture_resource(channel, "CHANNEL", source="EVENT_AFTER_CREATE")
         await self._process_security_event(
             SecurityEvent(guild_id=channel.guild.id, event_type=SecurityEventType.CHANNEL_CREATE, target_id=channel.id),
             channel.guild,
         )
 
     async def on_guild_channel_update(self, before: discord.abc.GuildChannel, after: discord.abc.GuildChannel) -> None:
+        await self._capture_resource(before, "CHANNEL", source="EVENT_BEFORE_UPDATE")
         await self._process_security_event(
             SecurityEvent(guild_id=after.guild.id, event_type=SecurityEventType.CHANNEL_UPDATE, target_id=after.id),
             after.guild,
         )
 
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
+        await self._capture_resource(channel, "CHANNEL", source="EVENT_BEFORE_DELETE")
         logger.warning("Guild channel deleted: guild=%s channel=%s name=%s", channel.guild.id, channel.id, channel.name)
         await self._process_security_event(
             SecurityEvent(guild_id=channel.guild.id, event_type=SecurityEventType.CHANNEL_DELETE, target_id=channel.id),
@@ -100,10 +122,33 @@ class APXORClient(discord.Client):
         )
 
     async def on_guild_update(self, before: discord.Guild, after: discord.Guild) -> None:
+        await self._capture_resource(before, "GUILD", source="EVENT_BEFORE_UPDATE")
         await self._process_security_event(
             SecurityEvent(guild_id=after.id, event_type=SecurityEventType.GUILD_UPDATE),
             after,
         )
+
+    async def _capture_resource(self, resource, resource_type: str, *, source: str) -> None:
+        """Persist a resource snapshot without blocking the security decision path."""
+        if SessionLocal is None:
+            return
+        try:
+            async with SessionLocal() as session:
+                await self.snapshots.capture_resource(
+                    session,
+                    resource,
+                    resource_type=resource_type,
+                    source=source,
+                )
+                await session.commit()
+        except Exception:
+            logger.exception(
+                "Snapshot capture failed: guild=%s resource=%s/%s source=%s",
+                getattr(getattr(resource, "guild", resource), "id", "unknown"),
+                resource_type,
+                getattr(resource, "id", "unknown"),
+                source,
+            )
 
     async def _run_auto_setup(self, guild: discord.Guild) -> None:
         if SessionLocal is None:
@@ -163,7 +208,7 @@ class APXORClient(discord.Client):
             return None
 
     async def _process_security_event(self, event: SecurityEvent, guild: discord.Guild) -> None:
-        """Correlate, enrich, score, persist, and contain a security event."""
+        """Correlate, enrich, score, persist, contain, and recover a security event."""
         match = await self.audit_correlator.correlate(guild, event)
         if match is not None:
             event = SecurityEvent(
@@ -247,6 +292,25 @@ class APXORClient(discord.Client):
                         )
             except Exception:
                 logger.exception("Lockdown execution failed: guild=%s", event.guild_id)
+
+        if event.event_type in {SecurityEventType.CHANNEL_DELETE, SecurityEventType.ROLE_DELETE} and detection.signal.score >= 60:
+            resource_type = "CHANNEL" if event.event_type == SecurityEventType.CHANNEL_DELETE else "ROLE"
+            priority = 10 if event.protected_target else 50
+            queued = await self.recovery_orchestrator.enqueue(
+                guild_id=event.guild_id,
+                resource_type=resource_type,
+                resource_id=event.target_id or 0,
+                reason=(
+                    f"Automatic recovery after {event.event_type.value}; "
+                    f"risk={detection.signal.score}; actor={event.actor_id}"
+                ),
+                priority=priority,
+            )
+            if not queued:
+                logger.critical(
+                    "RECOVERY QUEUE REJECTED: guild=%s resource=%s/%s risk=%s",
+                    event.guild_id, resource_type, event.target_id, detection.signal.score,
+                )
 
         if detection.signal.score >= 80:
             logger.critical(
