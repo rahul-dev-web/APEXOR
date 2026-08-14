@@ -32,11 +32,13 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Advisory Groq threat analysis with strict structured output, input hashing and asynchronous execution
 - Persistent `ai_threat_assessments` audit records for AI analysis
 - AI failure isolation: Groq cannot block deterministic detection, lockdown, notification or recovery
-- Security-core, permission, audit, AI, privilege-escalation and dashboard-auth unit tests
+- Deterministic security decision kernel separating event risk from enforcement policy
+- Security-core, permission, audit, AI, privilege-escalation, decision-kernel and dashboard-auth unit tests
 - Docker image + GitHub Actions compile/test workflow
 
 ### Not yet implemented
 
+- Wire the decision kernel into every Gateway event path and remove duplicated policy logic from the Discord client
 - Complete APXOR command coverage for advanced editing, moderation, snapshots, recovery and configuration
 - `/ai ask` conversational security analyst and dedicated AI channel
 - Role-member assignment restoration and broader Discord resource recovery verification
@@ -129,6 +131,9 @@ Discord Gateway + Audit Logs
             v
       Risk + Correlation
             |
+            v
+   Deterministic Decision Kernel
+            |
       +-----+-----+
       |           |
       v           v
@@ -189,7 +194,7 @@ The security pipeline launches AI analysis asynchronously after deterministic ev
 4. Auto Setup — **implemented**
 5. Permission Auditor — **implemented; policy expansion next**
 6. Capability Authorization — **implemented; command coverage expanding**
-7. Anti-Nuke Detection — **implemented; integration/behavior hardening next**
+7. Anti-Nuke Detection — **implemented; behavior hardening next**
 8. Audit Correlation — **real-time Gateway + REST fallback implemented; reconciliation hardening next**
 9. Snapshots — **implemented; broader resource coverage next**
 10. Recovery — **dependency/rate-limit/priority MVP implemented; verification expansion next**
