@@ -15,9 +15,11 @@ class AuditMatch:
     action: str
 
 
+# Only events where actor attribution materially improves the security decision
+# are correlated immediately. High-volume channel updates are intentionally left
+# out to avoid turning every routine edit into an Audit Log REST request.
 _ACTIONS: dict[SecurityEventType, discord.AuditLogAction] = {
     SecurityEventType.CHANNEL_CREATE: discord.AuditLogAction.channel_create,
-    SecurityEventType.CHANNEL_UPDATE: discord.AuditLogAction.channel_update,
     SecurityEventType.CHANNEL_DELETE: discord.AuditLogAction.channel_delete,
     SecurityEventType.ROLE_CREATE: discord.AuditLogAction.role_create,
     SecurityEventType.ROLE_UPDATE: discord.AuditLogAction.role_update,
