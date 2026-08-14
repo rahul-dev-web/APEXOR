@@ -1,14 +1,18 @@
 import logging
 
 import discord
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.constants import SecurityEventType
 from app.database.session import SessionLocal
+from app.models.security import SecurityConfig
 from app.security.audit import AuditLogCorrelator
 from app.security.events import EventCorrelator, SecurityEvent
+from app.security.lockdown import LockdownEngine
 from app.security.persistence import SecurityPersistence
 from app.security.permissions.audit import PermissionAudit
+from app.security.protected import ProtectedResourceService
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +29,8 @@ class APXORClient(discord.Client):
         self.event_correlator = EventCorrelator(window_seconds=10.0)
         self.audit_correlator = AuditLogCorrelator(limit=10)
         self.security_persistence = SecurityPersistence()
+        self.protected_resources = ProtectedResourceService()
+        self.lockdown = LockdownEngine()
 
     async def setup_hook(self) -> None:
         logger.info("APXOR Discord client setup initialized")
@@ -48,11 +54,7 @@ class APXORClient(discord.Client):
 
     async def on_guild_role_create(self, role: discord.Role) -> None:
         await self._process_security_event(
-            SecurityEvent(
-                guild_id=role.guild.id,
-                event_type=SecurityEventType.ROLE_CREATE,
-                target_id=role.id,
-            ),
+            SecurityEvent(guild_id=role.guild.id, event_type=SecurityEventType.ROLE_CREATE, target_id=role.id),
             role.guild,
         )
         self._log_permission_findings(role.guild)
@@ -61,83 +63,43 @@ class APXORClient(discord.Client):
         if before.permissions.value != after.permissions.value:
             logger.warning(
                 "Role permission change detected: guild=%s role=%s before=%s after=%s",
-                after.guild.id,
-                after.id,
-                before.permissions.value,
-                after.permissions.value,
+                after.guild.id, after.id, before.permissions.value, after.permissions.value,
             )
         await self._process_security_event(
-            SecurityEvent(
-                guild_id=after.guild.id,
-                event_type=SecurityEventType.ROLE_UPDATE,
-                target_id=after.id,
-            ),
+            SecurityEvent(guild_id=after.guild.id, event_type=SecurityEventType.ROLE_UPDATE, target_id=after.id),
             after.guild,
         )
         self._log_permission_findings(after.guild)
 
     async def on_guild_role_delete(self, role: discord.Role) -> None:
-        logger.warning(
-            "Guild role deleted: guild=%s role=%s name=%s",
-            role.guild.id,
-            role.id,
-            role.name,
-        )
+        logger.warning("Guild role deleted: guild=%s role=%s name=%s", role.guild.id, role.id, role.name)
         await self._process_security_event(
-            SecurityEvent(
-                guild_id=role.guild.id,
-                event_type=SecurityEventType.ROLE_DELETE,
-                target_id=role.id,
-            ),
+            SecurityEvent(guild_id=role.guild.id, event_type=SecurityEventType.ROLE_DELETE, target_id=role.id),
             role.guild,
         )
 
     async def on_guild_channel_create(self, channel: discord.abc.GuildChannel) -> None:
         await self._process_security_event(
-            SecurityEvent(
-                guild_id=channel.guild.id,
-                event_type=SecurityEventType.CHANNEL_CREATE,
-                target_id=channel.id,
-            ),
+            SecurityEvent(guild_id=channel.guild.id, event_type=SecurityEventType.CHANNEL_CREATE, target_id=channel.id),
             channel.guild,
         )
 
-    async def on_guild_channel_update(
-        self,
-        before: discord.abc.GuildChannel,
-        after: discord.abc.GuildChannel,
-    ) -> None:
+    async def on_guild_channel_update(self, before: discord.abc.GuildChannel, after: discord.abc.GuildChannel) -> None:
         await self._process_security_event(
-            SecurityEvent(
-                guild_id=after.guild.id,
-                event_type=SecurityEventType.CHANNEL_UPDATE,
-                target_id=after.id,
-            ),
+            SecurityEvent(guild_id=after.guild.id, event_type=SecurityEventType.CHANNEL_UPDATE, target_id=after.id),
             after.guild,
         )
 
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
-        logger.warning(
-            "Guild channel deleted: guild=%s channel=%s name=%s",
-            channel.guild.id,
-            channel.id,
-            channel.name,
-        )
+        logger.warning("Guild channel deleted: guild=%s channel=%s name=%s", channel.guild.id, channel.id, channel.name)
         await self._process_security_event(
-            SecurityEvent(
-                guild_id=channel.guild.id,
-                event_type=SecurityEventType.CHANNEL_DELETE,
-                target_id=channel.id,
-            ),
+            SecurityEvent(guild_id=channel.guild.id, event_type=SecurityEventType.CHANNEL_DELETE, target_id=channel.id),
             channel.guild,
         )
 
     async def on_guild_update(self, before: discord.Guild, after: discord.Guild) -> None:
         await self._process_security_event(
-            SecurityEvent(
-                guild_id=after.id,
-                event_type=SecurityEventType.GUILD_UPDATE,
-            ),
+            SecurityEvent(guild_id=after.id, event_type=SecurityEventType.GUILD_UPDATE),
             after,
         )
 
@@ -147,40 +109,34 @@ class APXORClient(discord.Client):
         try:
             async with SessionLocal() as session:
                 await self.security_persistence.ensure_guild(
-                    session,
-                    guild.id,
-                    name=guild.name,
-                    owner_id=guild.owner_id,
+                    session, guild.id, name=guild.name, owner_id=guild.owner_id,
                 )
                 await session.commit()
         except Exception:
             logger.exception("Failed to persist guild state: guild=%s", guild.id)
 
-    async def _persist_detection(self, detection) -> None:
+    async def _persist_detection(self, detection) -> int | None:
         if SessionLocal is None:
-            return
+            return None
         try:
+            guild = self.get_guild(detection.event.guild_id)
             async with SessionLocal() as session:
                 await self.security_persistence.ensure_guild(
                     session,
                     detection.event.guild_id,
-                    name=str(self.get_guild(detection.event.guild_id).name)
-                    if self.get_guild(detection.event.guild_id)
-                    else "Unknown Guild",
-                    owner_id=self.get_guild(detection.event.guild_id).owner_id
-                    if self.get_guild(detection.event.guild_id)
-                    else 0,
+                    name=guild.name if guild else "Unknown Guild",
+                    owner_id=guild.owner_id if guild else 0,
                 )
-                await self.security_persistence.record(session, detection)
+                return await self.security_persistence.record(session, detection)
         except Exception:
             logger.exception(
                 "Security persistence failed; detection remains in-memory: guild=%s fingerprint=%s",
-                detection.event.guild_id,
-                detection.event.fingerprint,
+                detection.event.guild_id, detection.event.fingerprint,
             )
+            return None
 
     async def _process_security_event(self, event: SecurityEvent, guild: discord.Guild) -> None:
-        """Enrich a Gateway event with audit identity, score it, then persist it."""
+        """Correlate, enrich, score, persist, and contain a security event."""
         match = await self.audit_correlator.correlate(guild, event)
         if match is not None:
             event = SecurityEvent(
@@ -195,61 +151,93 @@ class APXORClient(discord.Client):
             )
             logger.info(
                 "Audit correlation: guild=%s audit=%s actor=%s action=%s target=%s",
-                event.guild_id,
-                match.audit_log_id,
-                match.actor_id,
-                match.action,
-                event.target_id,
+                event.guild_id, match.audit_log_id, match.actor_id, match.action, event.target_id,
             )
+
+        if SessionLocal is not None and event.target_id is not None:
+            try:
+                async with SessionLocal() as session:
+                    protected = await self.protected_resources.is_protected_target(
+                        session,
+                        guild_id=event.guild_id,
+                        target_id=event.target_id,
+                        event_type=event.event_type.value,
+                    )
+                if protected and not event.protected_target:
+                    event = SecurityEvent(
+                        guild_id=event.guild_id,
+                        event_type=event.event_type,
+                        target_id=event.target_id,
+                        actor_id=event.actor_id,
+                        protected_target=True,
+                        audit_log_id=event.audit_log_id,
+                        event_id=event.event_id,
+                        timestamp=event.timestamp,
+                    )
+            except Exception:
+                logger.exception("Protected-resource lookup failed: guild=%s target=%s", guild.id, event.target_id)
 
         detection = self.event_correlator.process(event)
         if detection.velocity_count == 0:
             logger.debug("Duplicate security event suppressed: %s", event.fingerprint)
             return
 
-        await self._persist_detection(detection)
+        event_log_id = await self._persist_detection(detection)
 
         logger.info(
             "Security event: guild=%s type=%s actor=%s target=%s risk=%d velocity=%d/%ss reason=%s",
-            event.guild_id,
-            event.event_type.value,
-            event.actor_id,
-            event.target_id,
-            detection.signal.score,
-            detection.velocity_count,
-            detection.velocity_window_seconds,
-            detection.signal.reason,
+            event.guild_id, event.event_type.value, event.actor_id, event.target_id,
+            detection.signal.score, detection.velocity_count,
+            detection.velocity_window_seconds, detection.signal.reason,
         )
+
+        should_lockdown = detection.signal.score >= 80 or (
+            event.protected_target
+            and event.event_type in {
+                SecurityEventType.CHANNEL_DELETE,
+                SecurityEventType.ROLE_DELETE,
+                SecurityEventType.ROLE_UPDATE,
+            }
+            and detection.signal.score >= 60
+        )
+
+        if should_lockdown and SessionLocal is not None:
+            try:
+                async with SessionLocal() as session:
+                    config = await session.scalar(
+                        select(SecurityConfig).where(SecurityConfig.guild_id == event.guild_id)
+                    )
+                    if config is None or config.lockdown_enabled:
+                        actions = await self.lockdown.enter_lockdown(
+                            session,
+                            guild,
+                            actor_id=event.actor_id,
+                            event_log_id=event_log_id,
+                        )
+                        logger.critical(
+                            "APXOR LOCKDOWN: guild=%s actor=%s risk=%d actions=%s",
+                            event.guild_id, event.actor_id, detection.signal.score, actions,
+                        )
+            except Exception:
+                logger.exception("Lockdown execution failed: guild=%s", event.guild_id)
 
         if detection.signal.score >= 80:
             logger.critical(
                 "CRITICAL security pattern detected: guild=%s actor=%s type=%s target=%s risk=%d",
-                event.guild_id,
-                event.actor_id,
-                event.event_type.value,
-                event.target_id,
-                detection.signal.score,
+                event.guild_id, event.actor_id, event.event_type.value, event.target_id, detection.signal.score,
             )
         elif detection.signal.score >= 60:
             logger.warning(
                 "HIGH security pattern detected: guild=%s actor=%s type=%s target=%s risk=%d",
-                event.guild_id,
-                event.actor_id,
-                event.event_type.value,
-                event.target_id,
-                detection.signal.score,
+                event.guild_id, event.actor_id, event.event_type.value, event.target_id, detection.signal.score,
             )
 
     def _log_permission_findings(self, guild: discord.Guild) -> None:
         for finding in self.permission_audit.audit_guild(guild):
             logger.warning(
                 "Privileged role detected: guild=%s role=%s name=%r severity=%s permissions=%s owner_role=%s",
-                guild.id,
-                finding.role_id,
-                finding.role_name,
-                finding.severity,
-                ",".join(finding.permissions),
-                finding.is_owner_role,
+                guild.id, finding.role_id, finding.role_name, finding.severity,
+                ",".join(finding.permissions), finding.is_owner_role,
             )
 
     async def start_bot(self) -> None:
