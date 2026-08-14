@@ -30,12 +30,11 @@ class ProtectionRuntimeResult:
 
 
 class ProtectionRuntime:
-    """Bridge the stateless policy decision into a persistent guild lifecycle.
+    """Bridge policy decisions into the deterministic guild lifecycle.
 
-    Discord, database, notification and recovery side effects stay outside this
-    class. This keeps the security transition deterministic and makes the
-    lifecycle straightforward to unit-test before wiring it into the Gateway
-    event handler.
+    The policy decision remains configuration-aware, while the lifecycle is
+    enforced by the explicit state machine. Discord, database, notification and
+    recovery side effects stay outside this class.
     """
 
     def __init__(self, state: ProtectionState = ProtectionState.INITIALIZING) -> None:
@@ -49,13 +48,32 @@ class ProtectionRuntime:
         target = ProtectionState.DEGRADED if degraded else ProtectionState.PROTECTED
         return self.machine.transition(target)
 
-    def evaluate(self, detection: Detection, config: SecurityConfig | None) -> ProtectionRuntimeResult:
+    def evaluate(
+        self, detection: Detection, config: SecurityConfig | None
+    ) -> ProtectionRuntimeResult:
         decision = resolve_decision(detection, config)
-        transition = self.machine.enter_incident(detection.signal.score)
+
+        # The decision policy can request containment before the normal risk
+        # state reaches LOCKDOWN (for example, a protected-resource deletion).
+        # The persisted lifecycle must reflect the actual containment state.
+        target = ProtectionState.LOCKDOWN if decision.should_lockdown else decision.state
+
+        # Never let a later low-risk event clear active containment/recovery.
+        if self.machine.state in {
+            ProtectionState.LOCKDOWN,
+            ProtectionState.RECOVERING,
+            ProtectionState.RECOVERY_FAILED,
+        } and target == ProtectionState.PROTECTED:
+            transition = TransitionResult(self.machine.state, self.machine.state, False)
+        else:
+            transition = self.machine.transition(target)
+
         return ProtectionRuntimeResult(decision=decision, transition=transition)
 
     def begin_recovery(self) -> TransitionResult:
         return self.machine.begin_recovery()
 
-    def finish_recovery(self, *, success: bool, degraded: bool = False) -> TransitionResult:
+    def finish_recovery(
+        self, *, success: bool, degraded: bool = False
+    ) -> TransitionResult:
         return self.machine.finish_recovery(success=success, degraded=degraded)
