@@ -17,11 +17,9 @@ class RecoveryEngine:
     """Reconstruct recoverable Discord state from APXOR snapshots.
 
     Recovery creates new Discord resources; it cannot resurrect deleted IDs or
-    message history. Every top-level recovery attempt is persisted for auditability.
-
-    Dependency ordering is enforced inside the engine: roles referenced by a
-    channel's permission overwrites are restored before the channel, and a
-    deleted parent category is restored before its child channel.
+    message history. Dependency reconstruction keeps a mapping from original
+    snapshot IDs to newly-created Discord IDs so recreated categories and roles
+    can be referenced by subsequent channel/overwrite creation.
     """
 
     def __init__(self) -> None:
@@ -62,19 +60,24 @@ class RecoveryEngine:
 
         try:
             payload = self.snapshots.decode(snapshot)
+            restored_ids: dict[int, int] = {}
             if resource_type == "ROLE":
-                restored = await self._restore_role(guild, payload)
+                restored = await self._restore_role(guild, payload, restored_ids)
             elif resource_type == "CHANNEL":
-                await self._restore_channel_dependencies(session, guild, payload)
-                restored = await self._restore_channel(guild, payload)
+                await self._restore_channel_dependencies(
+                    session, guild, payload, restored_ids
+                )
+                restored = await self._restore_channel(guild, payload, restored_ids)
             else:
                 raise ValueError(f"Unsupported recovery resource type: {resource_type}")
 
+            restored_ids[resource_id] = restored.id
             action.restored_resource_id = restored.id
             verification_error = self._verify_restored_resource(
                 restored,
                 resource_type=resource_type,
                 snapshot=payload,
+                restored_ids=restored_ids,
             )
             action.completed_at = datetime.now(timezone.utc)
             if verification_error is None:
@@ -94,7 +97,12 @@ class RecoveryEngine:
             await session.commit()
             return action
         except (discord.Forbidden, discord.HTTPException, ValueError, TypeError) as exc:
-            logger.exception("Recovery failed: guild=%s resource=%s/%s", guild.id, resource_type, resource_id)
+            logger.exception(
+                "Recovery failed: guild=%s resource=%s/%s",
+                guild.id,
+                resource_type,
+                resource_id,
+            )
             action.status = "FAILED"
             action.error = str(exc)
             action.completed_at = datetime.now(timezone.utc)
@@ -107,29 +115,24 @@ class RecoveryEngine:
         *,
         resource_type: str,
         snapshot: dict[str, Any],
+        restored_ids: dict[int, int] | None = None,
     ) -> str | None:
-        """Verify the reconstructed resource against immutable snapshot invariants.
-
-        Discord assigns a new ID after deletion, so verification intentionally
-        checks semantic state rather than the original resource ID. A recovery
-        is not considered successful until the recreated object matches the
-        important snapshot fields we can reliably observe after creation.
-        """
+        """Verify reconstructed state against immutable snapshot invariants."""
+        restored_ids = restored_ids or {}
         expected_name = snapshot.get("name")
         if expected_name is not None and getattr(restored, "name", None) != expected_name:
             return f"name mismatch: expected={expected_name!r} actual={getattr(restored, 'name', None)!r}"
 
         if resource_type == "ROLE":
-            role = restored
-            if not isinstance(role, discord.Role):
+            if not isinstance(restored, discord.Role):
                 return "restored object is not a Discord role"
             expected_permissions = int(snapshot.get("permissions", 0))
-            if role.permissions.value != expected_permissions:
-                return f"permission mismatch: expected={expected_permissions} actual={role.permissions.value}"
-            if bool(snapshot.get("hoist", False)) != role.hoist:
-                return f"hoist mismatch: expected={bool(snapshot.get('hoist', False))} actual={role.hoist}"
-            if bool(snapshot.get("mentionable", False)) != role.mentionable:
-                return f"mentionable mismatch: expected={bool(snapshot.get('mentionable', False))} actual={role.mentionable}"
+            if restored.permissions.value != expected_permissions:
+                return f"permission mismatch: expected={expected_permissions} actual={restored.permissions.value}"
+            if bool(snapshot.get("hoist", False)) != restored.hoist:
+                return f"hoist mismatch: expected={bool(snapshot.get('hoist', False))} actual={restored.hoist}"
+            if bool(snapshot.get("mentionable", False)) != restored.mentionable:
+                return f"mentionable mismatch: expected={bool(snapshot.get('mentionable', False))} actual={restored.mentionable}"
             return None
 
         if not isinstance(restored, discord.abc.GuildChannel):
@@ -139,10 +142,8 @@ class RecoveryEngine:
             return f"channel type mismatch: expected={expected_type} actual={restored.type.value}"
         expected_parent = snapshot.get("parent_id")
         actual_parent = getattr(restored, "category_id", None)
-        if expected_parent is not None and actual_parent != int(expected_parent):
-            # A deleted category is itself reconstructed with a new ID. In that
-            # case the semantic parent cannot be compared to the old ID; the
-            # recovery dependency step is responsible for rebuilding it.
+        mapped_parent = restored_ids.get(int(expected_parent)) if expected_parent is not None else None
+        if expected_parent is not None and actual_parent not in {int(expected_parent), mapped_parent}:
             parent = getattr(restored, "category", None)
             if parent is None or getattr(parent, "name", None) != snapshot.get("parent_name"):
                 return f"parent mismatch: expected={expected_parent} actual={actual_parent}"
@@ -153,48 +154,69 @@ class RecoveryEngine:
         session: AsyncSession,
         guild: discord.Guild,
         data: dict[str, Any],
+        restored_ids: dict[int, int],
     ) -> None:
-        """Restore resources required by a channel before creating it.
-
-        Discord channel creation can reference a category and permission
-        overwrites can reference roles. If those dependencies were deleted in
-        the same nuke, creating the channel first would silently produce an
-        incomplete reconstruction. We therefore restore dependencies first.
-        """
+        """Restore category and role dependencies before creating a channel."""
         parent_id = data.get("parent_id")
         if parent_id:
-            parent = guild.get_channel(int(parent_id))
+            original_parent_id = int(parent_id)
+            mapped_parent_id = restored_ids.get(original_parent_id)
+            parent = guild.get_channel(mapped_parent_id or original_parent_id)
             if not isinstance(parent, discord.CategoryChannel):
                 parent_snapshot = await self.snapshots.latest_resource(
                     session,
                     guild_id=guild.id,
                     resource_type="CHANNEL",
-                    resource_id=int(parent_id),
+                    resource_id=original_parent_id,
                 )
                 if parent_snapshot is not None:
                     parent_data = self.snapshots.decode(parent_snapshot)
                     if int(parent_data.get("type", -1)) == discord.ChannelType.category.value:
-                        await self._restore_channel_dependencies(session, guild, parent_data)
-                        await self._restore_channel(guild, parent_data)
+                        await self._restore_channel_dependencies(
+                            session, guild, parent_data, restored_ids
+                        )
+                        parent = await self._restore_channel(
+                            guild, parent_data, restored_ids
+                        )
+                        restored_ids[original_parent_id] = parent.id
 
         for item in data.get("overwrites", []):
             if item.get("target_type") != "role":
                 continue
-            role_id = int(item["target_id"])
-            if guild.get_role(role_id) is not None:
+            original_role_id = int(item["target_id"])
+            mapped_role_id = restored_ids.get(original_role_id)
+            if guild.get_role(mapped_role_id or original_role_id) is not None:
                 continue
             role_snapshot = await self.snapshots.latest_resource(
                 session,
                 guild_id=guild.id,
                 resource_type="ROLE",
-                resource_id=role_id,
+                resource_id=original_role_id,
             )
             if role_snapshot is not None:
-                await self._restore_role(guild, self.snapshots.decode(role_snapshot))
+                role = await self._restore_role(
+                    guild, self.snapshots.decode(role_snapshot), restored_ids
+                )
+                restored_ids[original_role_id] = role.id
 
-    async def _restore_role(self, guild: discord.Guild, data: dict[str, Any]) -> discord.Role:
+    async def _restore_role(
+        self,
+        guild: discord.Guild,
+        data: dict[str, Any],
+        restored_ids: dict[int, int] | None = None,
+    ) -> discord.Role:
+        restored_ids = restored_ids if restored_ids is not None else {}
+        original_id = int(data.get("id", 0)) if data.get("id") else None
+        mapped_id = restored_ids.get(original_id) if original_id else None
+        if mapped_id:
+            existing_mapped = guild.get_role(mapped_id)
+            if existing_mapped is not None:
+                return existing_mapped
+
         existing = discord.utils.get(guild.roles, name=data["name"])
         if existing is not None and not existing.is_default():
+            if original_id:
+                restored_ids[original_id] = existing.id
             return existing
 
         role = await guild.create_role(
@@ -205,16 +227,37 @@ class RecoveryEngine:
             mentionable=bool(data.get("mentionable", False)),
             reason="APXOR snapshot recovery",
         )
+        if original_id:
+            restored_ids[original_id] = role.id
         position = max(1, int(data.get("position", 1)))
         try:
-            await guild.edit_role_positions(positions={role: position}, reason="APXOR snapshot recovery")
+            await guild.edit_role_positions(
+                positions={role: position}, reason="APXOR snapshot recovery"
+            )
         except discord.HTTPException:
-            logger.warning("Could not restore role position: guild=%s role=%s", guild.id, role.id)
+            logger.warning(
+                "Could not restore role position: guild=%s role=%s", guild.id, role.id
+            )
         return role
 
-    async def _restore_channel(self, guild: discord.Guild, data: dict[str, Any]) -> discord.abc.GuildChannel:
+    async def _restore_channel(
+        self,
+        guild: discord.Guild,
+        data: dict[str, Any],
+        restored_ids: dict[int, int] | None = None,
+    ) -> discord.abc.GuildChannel:
+        restored_ids = restored_ids if restored_ids is not None else {}
+        original_id = int(data.get("id", 0)) if data.get("id") else None
+        mapped_id = restored_ids.get(original_id) if original_id else None
+        if mapped_id:
+            mapped = guild.get_channel(mapped_id)
+            if mapped is not None:
+                return mapped
+
         name = data["name"]
-        parent = guild.get_channel(data.get("parent_id")) if data.get("parent_id") else None
+        parent_id = data.get("parent_id")
+        mapped_parent_id = restored_ids.get(int(parent_id)) if parent_id else None
+        parent = guild.get_channel(mapped_parent_id or parent_id) if parent_id else None
         existing = next(
             (
                 channel
@@ -224,21 +267,31 @@ class RecoveryEngine:
             None,
         )
         if existing is not None:
-            # Dependency reconciliation is still useful when a pre-existing
-            # channel was found during a partial recovery.
             if parent is not None and existing.category_id != getattr(parent, "id", None):
                 try:
-                    await existing.edit(category=parent, reason="APXOR snapshot recovery")
+                    await existing.edit(
+                        category=parent, reason="APXOR snapshot recovery"
+                    )
                 except discord.HTTPException:
-                    logger.warning("Could not restore channel parent: guild=%s channel=%s", guild.id, existing.id)
+                    logger.warning(
+                        "Could not restore channel parent: guild=%s channel=%s",
+                        guild.id,
+                        existing.id,
+                    )
+            if original_id:
+                restored_ids[original_id] = existing.id
             return existing
 
-        overwrites = self._resolve_overwrites(guild, data.get("overwrites", []))
+        overwrites = self._resolve_overwrites(
+            guild, data.get("overwrites", []), restored_ids
+        )
         channel_type = int(data.get("type", discord.ChannelType.text.value))
         reason = "APXOR snapshot recovery"
 
         if channel_type == discord.ChannelType.category.value:
-            channel = await guild.create_category(name, overwrites=overwrites, reason=reason)
+            channel = await guild.create_category(
+                name, overwrites=overwrites, reason=reason
+            )
         elif channel_type == discord.ChannelType.text.value:
             channel = await guild.create_text_channel(
                 name,
@@ -270,21 +323,36 @@ class RecoveryEngine:
         else:
             raise ValueError(f"Unsupported Discord channel type for recovery: {channel_type}")
 
+        if original_id:
+            restored_ids[original_id] = channel.id
         try:
-            await channel.edit(position=max(0, int(data.get("position", 0))), reason=reason)
+            await channel.edit(
+                position=max(0, int(data.get("position", 0))), reason=reason
+            )
         except discord.HTTPException:
-            logger.warning("Could not restore channel position: guild=%s channel=%s", guild.id, channel.id)
+            logger.warning(
+                "Could not restore channel position: guild=%s channel=%s",
+                guild.id,
+                channel.id,
+            )
         return channel
 
     @staticmethod
     def _resolve_overwrites(
         guild: discord.Guild,
         items: list[dict],
+        restored_ids: dict[int, int] | None = None,
     ) -> dict[discord.abc.Snowflake, discord.PermissionOverwrite]:
+        restored_ids = restored_ids or {}
         resolved: dict[discord.abc.Snowflake, discord.PermissionOverwrite] = {}
         for item in items:
-            target_id = int(item["target_id"])
-            target = guild.get_role(target_id) if item.get("target_type") == "role" else guild.get_member(target_id)
+            original_id = int(item["target_id"])
+            target_id = restored_ids.get(original_id, original_id)
+            target = (
+                guild.get_role(target_id)
+                if item.get("target_type") == "role"
+                else guild.get_member(target_id)
+            )
             if target is None:
                 continue
             allow = discord.Permissions(int(item.get("allow", 0)))
