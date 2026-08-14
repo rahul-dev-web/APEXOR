@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +14,7 @@ from app.security.events import Detection
 _HIGH = 60
 _CRITICAL = 80
 _EMERGENCY = 95
+_INCIDENT_WINDOW_SECONDS = 30
 
 
 def severity_for(score: int, *, high: int = _HIGH, critical: int = _CRITICAL, emergency: int = _EMERGENCY) -> str:
@@ -26,6 +29,19 @@ def severity_for(score: int, *, high: int = _HIGH, critical: int = _CRITICAL, em
     if score >= 20:
         return "LOW"
     return "INFO"
+
+
+def incident_family(event_type: str) -> str:
+    """Collapse related event types into an incident-level attack family."""
+    if event_type.startswith("CHANNEL_"):
+        return "CHANNEL_NUKE"
+    if event_type.startswith("ROLE_"):
+        return "ROLE_NUKE"
+    if event_type in {"GUILD_UPDATE", "WEBHOOKS_UPDATE", "INTEGRATION_CREATE", "INTEGRATION_UPDATE", "INTEGRATION_DELETE"}:
+        return "GUILD_TAMPERING"
+    if event_type in {"MEMBER_REMOVE", "MEMBER_UPDATE", "BAN_ADD", "BAN_REMOVE", "KICK"}:
+        return "MEMBER_MODERATION"
+    return "SECURITY_ACTIVITY"
 
 
 class SecurityPersistence:
@@ -95,19 +111,66 @@ class SecurityPersistence:
         await session.flush()
 
         if detection.signal.score >= high_threshold:
-            session.add(
-                SecurityIncident(
-                    incident_key=f"{event.guild_id}:{event.fingerprint}",
-                    guild_id=event.guild_id,
-                    actor_discord_id=event.actor_id,
-                    incident_type=event.event_type.value,
-                    severity=severity,
-                    risk_score=detection.signal.score,
-                    status="OPEN",
-                    event_count=1,
-                    summary=detection.signal.reason,
-                )
-            )
+            await self._upsert_incident(session, detection, severity=severity)
 
         await session.commit()
         return log.id
+
+    async def _upsert_incident(
+        self,
+        session: AsyncSession,
+        detection: Detection,
+        *,
+        severity: str,
+    ) -> None:
+        event = detection.event
+        family = incident_family(event.event_type.value)
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=_INCIDENT_WINDOW_SECONDS)
+
+        query = select(SecurityIncident).where(
+            SecurityIncident.guild_id == event.guild_id,
+            SecurityIncident.incident_type == family,
+            SecurityIncident.status == "OPEN",
+            SecurityIncident.created_at >= cutoff,
+        )
+        if event.actor_id is None:
+            query = query.where(SecurityIncident.actor_discord_id.is_(None))
+        else:
+            query = query.where(SecurityIncident.actor_discord_id == event.actor_id)
+
+        incident = await session.scalar(query.order_by(SecurityIncident.created_at.desc()).limit(1))
+        if incident is None:
+            actor = str(event.actor_id) if event.actor_id is not None else "unknown"
+            incident = SecurityIncident(
+                incident_key=f"{event.guild_id}:{actor}:{family}:{event.fingerprint}",
+                guild_id=event.guild_id,
+                actor_discord_id=event.actor_id,
+                incident_type=family,
+                severity=severity,
+                risk_score=detection.signal.score,
+                status="OPEN",
+                event_count=1,
+                summary=f"{family}: {detection.signal.reason}",
+            )
+            session.add(incident)
+            return
+
+        incident.event_count += 1
+        incident.risk_score = max(incident.risk_score, detection.signal.score)
+        if _severity_rank(severity) > _severity_rank(incident.severity):
+            incident.severity = severity
+        incident.summary = (
+            f"{family}: {incident.event_count} correlated events; "
+            f"latest={detection.signal.reason}"
+        )
+
+
+def _severity_rank(value: str) -> int:
+    return {
+        "INFO": 0,
+        "LOW": 1,
+        "MEDIUM": 2,
+        "HIGH": 3,
+        "CRITICAL": 4,
+        "EMERGENCY": 5,
+    }.get(value, 0)
