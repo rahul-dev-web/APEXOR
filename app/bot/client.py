@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.core.constants import SecurityEventType
 from app.database.session import SessionLocal
 from app.models.security import SecurityConfig
-from app.security.audit import AuditLogCorrelator
+from app.security.audit import AuditLogCorrelator, event_from_audit_entry
 from app.security.events import Detection, EventCorrelator, SecurityEvent
 from app.security.lockdown import LockdownEngine
 from app.security.notifications import SecurityNotifier
@@ -30,6 +30,7 @@ class APXORClient(discord.Client):
     def __init__(self) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
+        intents.moderation = True
         super().__init__(intents=intents)
         self.tree = APXORCommandTree(self)
         self._commands_synced = False
@@ -77,6 +78,31 @@ class APXORClient(discord.Client):
             logger.exception("Failed to sync APXOR commands to joined guild=%s", guild.id)
         await self._audit_and_enforce_permissions(guild)
         await self._run_auto_setup(guild)
+
+    async def on_audit_log_entry_create(self, entry: discord.AuditLogEntry) -> None:
+        """Consume Discord's real-time audit-log signal when available.
+
+        This closes the actor-correlation gap for security-relevant audit
+        actions that do not have a dedicated Gateway resource event. The event
+        fingerprint is the Discord audit ID, so a matching resource Gateway
+        event is safely deduplicated by the deterministic correlator.
+        """
+        guild = entry.guild
+        if guild is None:
+            return
+        event = event_from_audit_entry(guild, entry)
+        if event is None:
+            return
+        logger.info(
+            "Audit Gateway event: guild=%s audit=%s action=%s actor=%s target=%s event=%s",
+            guild.id,
+            entry.id,
+            entry.action,
+            event.actor_id,
+            event.target_id,
+            event.event_type.value,
+        )
+        await self._process_security_event(event, guild)
 
     async def on_guild_role_create(self, role: discord.Role) -> None:
         await self._capture_resource(role, "ROLE", source="EVENT_AFTER_CREATE")
@@ -207,7 +233,9 @@ class APXORClient(discord.Client):
             if config is not None and not config.anti_nuke_enabled:
                 return None
 
-            match = await self.audit_correlator.correlate(guild, event) if config is None or config.audit_correlation_enabled else None
+            match = None
+            if event.audit_log_id is None and (config is None or config.audit_correlation_enabled):
+                match = await self.audit_correlator.correlate(guild, event)
             if match is not None:
                 event = SecurityEvent(guild_id=event.guild_id, event_type=event.event_type, target_id=event.target_id, actor_id=match.actor_id, protected_target=event.protected_target, audit_log_id=match.audit_log_id, event_id=event.event_id, timestamp=event.timestamp)
                 logger.info("Audit correlation: guild=%s audit=%s actor=%s action=%s target=%s", event.guild_id, match.audit_log_id, match.actor_id, match.action, event.target_id)
@@ -257,8 +285,3 @@ class APXORClient(discord.Client):
                     logger.critical("RECOVERY QUEUE REJECTED: guild=%s resource=%s/%s risk=%s", event.guild_id, resource_type, event.target_id, detection.signal.score)
 
             return detection
-
-    async def start_bot(self) -> None:
-        if not settings.discord_token:
-            raise RuntimeError("DISCORD_TOKEN is not configured")
-        await self.start(settings.discord_token)
