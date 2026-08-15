@@ -8,6 +8,7 @@ from app.security.recovery import RecoveryEngine
 def test_role_recovery_verification_accepts_matching_state() -> None:
     role = MagicMock(spec=discord.Role)
     role.name = "Moderator"
+    role.managed = False
     role.permissions = discord.Permissions(manage_messages=True)
     role.hoist = True
     role.mentionable = False
@@ -25,6 +26,7 @@ def test_role_recovery_verification_accepts_matching_state() -> None:
 def test_role_recovery_verification_rejects_permission_drift() -> None:
     role = MagicMock(spec=discord.Role)
     role.name = "Moderator"
+    role.managed = False
     role.permissions = discord.Permissions.none()
     role.hoist = True
     role.mentionable = False
