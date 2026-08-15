@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 
-from app.api.dashboard import require_dashboard_key
+from app.api.dashboard_auth import require_dashboard_guild_access
 from app.database.session import SessionLocal
 from app.models.ai import AIThreatAssessment
 from app.models.events import SecurityEventLog, SecurityIncident
@@ -15,27 +15,24 @@ from app.models.snapshots import SecuritySnapshot
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
-@router.get("/guilds/{guild_id}/overview", dependencies=[Depends(require_dashboard_key)])
+@router.get("/guilds/{guild_id}/overview", dependencies=[Depends(require_dashboard_guild_access)])
 async def overview(guild_id: int) -> dict:
     """Return one compact dashboard payload for the server security center.
 
-    The endpoint intentionally aggregates persisted state only. It does not
-    perform Discord REST calls, mutate security state, or invoke Groq.
+    Access is protected by the same Discord OAuth guild authorization used by
+    the other guild-scoped dashboard endpoints. The endpoint only reads
+    persisted state; it never invokes Discord REST calls, mutates security
+    state, or invokes Groq.
     """
     if SessionLocal is None:
         raise HTTPException(status_code=503, detail="Database is unavailable.")
 
     async with SessionLocal() as session:
-        guild = await session.scalar(
-            select(Guild).where(Guild.discord_guild_id == guild_id)
-        )
+        guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == guild_id))
         if guild is None:
             raise HTTPException(status_code=404, detail="Guild is not registered with APXOR.")
 
-        config = await session.scalar(
-            select(SecurityConfig).where(SecurityConfig.guild_id == guild.id)
-        )
-
+        config = await session.scalar(select(SecurityConfig).where(SecurityConfig.guild_id == guild.id))
         critical_events = await session.scalar(
             select(func.count(SecurityEventLog.id)).where(
                 SecurityEventLog.guild_id == guild.id,
@@ -55,14 +52,10 @@ async def overview(guild_id: int) -> dict:
             )
         )
         snapshot_count = await session.scalar(
-            select(func.count(SecuritySnapshot.id)).where(
-                SecuritySnapshot.guild_id == guild.id,
-            )
+            select(func.count(SecuritySnapshot.id)).where(SecuritySnapshot.guild_id == guild.id)
         )
         ai_count = await session.scalar(
-            select(func.count(AIThreatAssessment.id)).where(
-                AIThreatAssessment.guild_id == guild.id,
-            )
+            select(func.count(AIThreatAssessment.id)).where(AIThreatAssessment.guild_id == guild.id)
         )
 
         return {
@@ -77,9 +70,7 @@ async def overview(guild_id: int) -> dict:
                 "state": guild.protection_state,
                 "score": guild.protection_score,
                 "anti_nuke_enabled": bool(config and config.anti_nuke_enabled),
-                "permission_enforcement_enabled": bool(
-                    config and config.permission_enforcement_enabled
-                ),
+                "permission_enforcement_enabled": bool(config and config.permission_enforcement_enabled),
                 "lockdown_enabled": bool(config and config.lockdown_enabled),
                 "recovery_enabled": bool(config and config.recovery_enabled),
             },
