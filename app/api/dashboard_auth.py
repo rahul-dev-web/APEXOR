@@ -139,7 +139,7 @@ async def me(
     x_apxor_dashboard_key: str | None = Header(default=None),
     apxor_dashboard_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict:
-    if settings.dashboard_api_key and x_apxor_dashboard_key and secrets.compare_digest(x_apxor_dashboard_session or "", settings.dashboard_api_key):
+    if settings.dashboard_api_key and x_apxor_dashboard_key and secrets.compare_digest(x_apxor_dashboard_key, settings.dashboard_api_key):
         return {"authenticated": True, "mode": "service"}
     if not apxor_dashboard_session:
         raise HTTPException(status_code=401, detail="Dashboard login required.")
