@@ -8,14 +8,22 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     discord_token: str = ""
+    discord_client_id: str = ""
+    discord_client_secret: str = ""
+    discord_redirect_uri: str = "http://localhost:8000/api/dashboard/auth/callback"
     database_url: str = ""
 
     groq_api_key: str = ""
     groq_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-    # Service-to-service authentication for the MVP dashboard API.
-    # End-user OAuth/session authentication belongs to the dashboard frontend phase.
+    # Legacy service-to-service authentication for internal tooling.
     dashboard_api_key: str = ""
+
+    # Browser-facing dashboard session configuration. The secret must never be
+    # exposed to the frontend or sent to Discord.
+    dashboard_session_secret: str = ""
+    dashboard_session_ttl_seconds: int = 3600
+    dashboard_frontend_url: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(
         env_file=".env",

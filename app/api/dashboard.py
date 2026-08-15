@@ -6,6 +6,7 @@ import secrets
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import desc, select
 
+from app.api.dashboard_auth import require_dashboard_guild_access
 from app.core.config import settings
 from app.database.session import SessionLocal
 from app.models.ai import AIThreatAssessment
@@ -19,11 +20,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
 async def require_dashboard_key(x_apxor_dashboard_key: str | None = Header(default=None)) -> None:
-    """Protect dashboard data with an explicit server-side bearer secret.
-
-    This is intentionally service-level authentication for the MVP. End-user
-    dashboard sessions/OAuth belong to the later dashboard frontend phase.
-    """
+    """Legacy service-to-service authentication for non-guild dashboard endpoints."""
     configured = settings.dashboard_api_key
     if not configured:
         raise HTTPException(
@@ -41,7 +38,7 @@ async def _guild_or_404(session, guild_id: int) -> Guild:
     return guild
 
 
-@router.get("/guilds/{guild_id}/security", dependencies=[Depends(require_dashboard_key)])
+@router.get("/guilds/{guild_id}/security", dependencies=[Depends(require_dashboard_guild_access)])
 async def security_overview(guild_id: int) -> dict:
     if SessionLocal is None:
         raise HTTPException(status_code=503, detail="Database is unavailable.")
@@ -69,7 +66,7 @@ async def security_overview(guild_id: int) -> dict:
         }
 
 
-@router.get("/guilds/{guild_id}/incidents", dependencies=[Depends(require_dashboard_key)])
+@router.get("/guilds/{guild_id}/incidents", dependencies=[Depends(require_dashboard_guild_access)])
 async def incidents(guild_id: int, limit: int = 25) -> list[dict]:
     if SessionLocal is None:
         raise HTTPException(status_code=503, detail="Database is unavailable.")
@@ -77,30 +74,15 @@ async def incidents(guild_id: int, limit: int = 25) -> list[dict]:
     async with SessionLocal() as session:
         guild = await _guild_or_404(session, guild_id)
         rows = (await session.scalars(
-            select(SecurityIncident)
-            .where(SecurityIncident.guild_id == guild.id)
-            .order_by(desc(SecurityIncident.created_at))
-            .limit(limit)
+            select(SecurityIncident).where(SecurityIncident.guild_id == guild.id).order_by(desc(SecurityIncident.created_at)).limit(limit)
         )).all()
         return [
-            {
-                "id": row.id,
-                "incident_key": row.incident_key,
-                "actor_id": row.actor_discord_id,
-                "incident_type": row.incident_type,
-                "severity": row.severity,
-                "risk_score": row.risk_score,
-                "status": row.status,
-                "event_count": row.event_count,
-                "summary": row.summary,
-                "created_at": row.created_at,
-                "resolved_at": row.resolved_at,
-            }
+            {"id": row.id, "incident_key": row.incident_key, "actor_id": row.actor_discord_id, "incident_type": row.incident_type, "severity": row.severity, "risk_score": row.risk_score, "status": row.status, "event_count": row.event_count, "summary": row.summary, "created_at": row.created_at, "resolved_at": row.resolved_at}
             for row in rows
         ]
 
 
-@router.get("/guilds/{guild_id}/events", dependencies=[Depends(require_dashboard_key)])
+@router.get("/guilds/{guild_id}/events", dependencies=[Depends(require_dashboard_guild_access)])
 async def events(guild_id: int, limit: int = 50) -> list[dict]:
     if SessionLocal is None:
         raise HTTPException(status_code=503, detail="Database is unavailable.")
@@ -108,32 +90,15 @@ async def events(guild_id: int, limit: int = 50) -> list[dict]:
     async with SessionLocal() as session:
         guild = await _guild_or_404(session, guild_id)
         rows = (await session.scalars(
-            select(SecurityEventLog)
-            .where(SecurityEventLog.guild_id == guild.id)
-            .order_by(desc(SecurityEventLog.created_at))
-            .limit(limit)
+            select(SecurityEventLog).where(SecurityEventLog.guild_id == guild.id).order_by(desc(SecurityEventLog.created_at)).limit(limit)
         )).all()
         return [
-            {
-                "id": row.id,
-                "fingerprint": row.fingerprint,
-                "event_type": row.event_type,
-                "severity": row.severity,
-                "actor_id": row.actor_discord_id,
-                "target_id": row.target_discord_id,
-                "audit_log_id": row.audit_log_id,
-                "risk_score": row.risk_score,
-                "velocity_count": row.velocity_count,
-                "status": row.status,
-                "action_taken": row.action_taken,
-                "reason": row.reason,
-                "created_at": row.created_at,
-            }
+            {"id": row.id, "fingerprint": row.fingerprint, "event_type": row.event_type, "severity": row.severity, "actor_id": row.actor_discord_id, "target_id": row.target_discord_id, "audit_log_id": row.audit_log_id, "risk_score": row.risk_score, "velocity_count": row.velocity_count, "status": row.status, "action_taken": row.action_taken, "reason": row.reason, "created_at": row.created_at}
             for row in rows
         ]
 
 
-@router.get("/guilds/{guild_id}/ai", dependencies=[Depends(require_dashboard_key)])
+@router.get("/guilds/{guild_id}/ai", dependencies=[Depends(require_dashboard_guild_access)])
 async def ai_assessments(guild_id: int, limit: int = 25) -> list[dict]:
     if SessionLocal is None:
         raise HTTPException(status_code=503, detail="Database is unavailable.")
@@ -141,30 +106,15 @@ async def ai_assessments(guild_id: int, limit: int = 25) -> list[dict]:
     async with SessionLocal() as session:
         guild = await _guild_or_404(session, guild_id)
         rows = (await session.scalars(
-            select(AIThreatAssessment)
-            .where(AIThreatAssessment.guild_id == guild.id)
-            .order_by(desc(AIThreatAssessment.created_at))
-            .limit(limit)
+            select(AIThreatAssessment).where(AIThreatAssessment.guild_id == guild.id).order_by(desc(AIThreatAssessment.created_at)).limit(limit)
         )).all()
         return [
-            {
-                "id": row.id,
-                "event_log_id": row.event_log_id,
-                "model": row.model,
-                "prompt_version": row.prompt_version,
-                "classification": row.classification,
-                "confidence": row.confidence,
-                "reason": row.reason,
-                "recommended_action": row.recommended_action,
-                "notify_owner": row.notify_owner,
-                "latency_ms": row.latency_ms,
-                "created_at": row.created_at,
-            }
+            {"id": row.id, "event_log_id": row.event_log_id, "model": row.model, "prompt_version": row.prompt_version, "classification": row.classification, "confidence": row.confidence, "reason": row.reason, "recommended_action": row.recommended_action, "notify_owner": row.notify_owner, "latency_ms": row.latency_ms, "created_at": row.created_at}
             for row in rows
         ]
 
 
-@router.get("/guilds/{guild_id}/recovery", dependencies=[Depends(require_dashboard_key)])
+@router.get("/guilds/{guild_id}/recovery", dependencies=[Depends(require_dashboard_guild_access)])
 async def recovery(guild_id: int, limit: int = 50) -> list[dict]:
     if SessionLocal is None:
         raise HTTPException(status_code=503, detail="Database is unavailable.")
@@ -172,29 +122,15 @@ async def recovery(guild_id: int, limit: int = 50) -> list[dict]:
     async with SessionLocal() as session:
         guild = await _guild_or_404(session, guild_id)
         rows = (await session.scalars(
-            select(RecoveryAction)
-            .where(RecoveryAction.guild_id == guild.id)
-            .order_by(desc(RecoveryAction.created_at))
-            .limit(limit)
+            select(RecoveryAction).where(RecoveryAction.guild_id == guild.id).order_by(desc(RecoveryAction.created_at)).limit(limit)
         )).all()
         return [
-            {
-                "id": row.id,
-                "resource_type": row.resource_type,
-                "original_resource_id": row.original_resource_id,
-                "restored_resource_id": row.restored_resource_id,
-                "snapshot_id": row.snapshot_id,
-                "status": row.status,
-                "reason": row.reason,
-                "error": row.error,
-                "created_at": row.created_at,
-                "completed_at": row.completed_at,
-            }
+            {"id": row.id, "resource_type": row.resource_type, "original_resource_id": row.original_resource_id, "restored_resource_id": row.restored_resource_id, "snapshot_id": row.snapshot_id, "status": row.status, "reason": row.reason, "error": row.error, "created_at": row.created_at, "completed_at": row.completed_at}
             for row in rows
         ]
 
 
-@router.get("/guilds/{guild_id}/snapshots", dependencies=[Depends(require_dashboard_key)])
+@router.get("/guilds/{guild_id}/snapshots", dependencies=[Depends(require_dashboard_guild_access)])
 async def snapshots(guild_id: int, limit: int = 50) -> list[dict]:
     if SessionLocal is None:
         raise HTTPException(status_code=503, detail="Database is unavailable.")
@@ -202,21 +138,10 @@ async def snapshots(guild_id: int, limit: int = 50) -> list[dict]:
     async with SessionLocal() as session:
         guild = await _guild_or_404(session, guild_id)
         rows = (await session.scalars(
-            select(SecuritySnapshot)
-            .where(SecuritySnapshot.guild_id == guild.id)
-            .order_by(desc(SecuritySnapshot.created_at))
-            .limit(limit)
+            select(SecuritySnapshot).where(SecuritySnapshot.guild_id == guild.id).order_by(desc(SecuritySnapshot.created_at)).limit(limit)
         )).all()
         return [
-            {
-                "id": row.id,
-                "snapshot_key": row.snapshot_key,
-                "resource_type": row.resource_type,
-                "resource_id": row.resource_id,
-                "version": row.version,
-                "source": row.source,
-                "created_at": row.created_at,
-            }
+            {"id": row.id, "snapshot_key": row.snapshot_key, "resource_type": row.resource_type, "resource_id": row.resource_id, "version": row.version, "source": row.source, "created_at": row.created_at}
             for row in rows
         ]
 
