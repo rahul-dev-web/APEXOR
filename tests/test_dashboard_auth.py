@@ -33,3 +33,23 @@ def test_dashboard_session_rejects_expiry() -> None:
 def test_dashboard_session_requires_strong_secret() -> None:
     with pytest.raises(ValueError, match="at least 32"):
         DashboardSessionSigner("short")
+
+
+def test_dashboard_csrf_token_is_bound_to_session() -> None:
+    signer = DashboardSessionSigner("x" * 40, ttl_seconds=60)
+    session_a = signer.issue(user_id=123, guild_ids={1}, now=1000)
+    session_b = signer.issue(user_id=123, guild_ids={1}, now=1000)
+    csrf = signer.issue_csrf_token(session_a)
+
+    assert signer.verify_csrf_token(session_a, csrf)
+    assert not signer.verify_csrf_token(session_b, csrf)
+
+
+def test_dashboard_csrf_token_rejects_tampering() -> None:
+    signer = DashboardSessionSigner("x" * 40, ttl_seconds=60)
+    session = signer.issue(user_id=123, guild_ids={1}, now=1000)
+    csrf = signer.issue_csrf_token(session)
+    nonce, signature = csrf.split(".", 1)
+    tampered = f"{nonce}X.{signature}"
+
+    assert not signer.verify_csrf_token(session, tampered)
