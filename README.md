@@ -6,13 +6,13 @@ APXOR is a security-first Discord anti-nuke platform.
 
 **Backend security MVP: ~95% implemented.**
 
-**Overall APXOR v1 engineering scope: ~80–85% implemented.**
+**Overall APXOR v1 engineering scope: ~82–86% implemented.**
 
-These are engineering progress estimates, not production-readiness claims. The deterministic security core, recovery lifecycle, AI advisory layer, dashboard API, and authenticated dashboard foundation are substantially implemented. Production integration/chaos verification and broader feature coverage remain.
+These are engineering progress estimates, not production-readiness claims. The deterministic security core, recovery lifecycle, AI advisory layer, dashboard API/authentication foundation, and operational health checks are substantially implemented. Live Discord integration/chaos verification, broader command/resource coverage, production observability and deployment verification remain.
 
 ### Implemented
 
-- FastAPI API foundation + health endpoint
+- FastAPI API foundation + liveness/readiness/deep health endpoints
 - SQLAlchemy 2.x async PostgreSQL support with Supabase-compatible configuration
 - Alembic migrations with a single merged head
 - Discord Gateway monitoring for guild, role, channel, audit-log, webhook and integration activity
@@ -37,13 +37,14 @@ These are engineering progress estimates, not production-readiness claims. The d
 - Deterministic security decision kernel separating event risk from enforcement policy
 - Explicit protection state machine with recovery success/failure/degraded transitions
 - `ProtectionRuntime` wired into the Discord Gateway event path
-- Unit tests covering security core, permissions, audit correlation, AI, privilege escalation, decision kernel, protection runtime, incident lifecycle and dashboard authentication/API behavior
+- Unit/chaos-style tests covering security core, permissions, audit correlation, AI, privilege escalation, decision kernel, protection runtime, incident lifecycle and dashboard authentication/API behavior
 - Docker image + GitHub Actions compile/test workflow
 - React/Vite dashboard foundation
 - Discord OAuth dashboard login with signed HttpOnly session cookies
 - Guild-scoped dashboard authorization based on Discord owner/admin/manage-guild access
 - Authenticated security overview with protection score, metrics, health and navigation
 - Dashboard views for security, incidents, events, recovery, snapshots and AI data
+- Safe dependency health snapshot exposing database, AI and dashboard-auth readiness without returning secret values
 
 ### Remaining
 
@@ -52,7 +53,7 @@ These are engineering progress estimates, not production-readiness claims. The d
 - Broader Discord resource recovery and verification coverage
 - Production external queue / worker separation
 - Reconciliation hardening for all eventually-consistent Discord audit/resource cases
-- Full Discord integration and chaos test suite
+- Full live Discord integration and chaos test suite
 - Production observability, alerting and deployment verification
 - Dashboard write workflows with production-grade CSRF/mutation policy
 - Dashboard UX expansion beyond the current security overview/data views
@@ -109,6 +110,14 @@ Run migrations:
 ```bash
 alembic upgrade head
 ```
+
+## Operational health
+
+- `/health` is a liveness check and does not require external dependencies.
+- `/health/ready` verifies PostgreSQL connectivity and is suitable for Render readiness checks.
+- `/health/deep` returns a non-secret dependency snapshot for database, Groq configuration and dashboard session configuration. It returns HTTP 503 when any of those dependencies are not ready.
+
+The deep endpoint intentionally reports configuration state only; it never returns API keys, OAuth secrets or session-secret values.
 
 ## Dashboard authentication
 
@@ -226,7 +235,7 @@ The security pipeline launches AI analysis asynchronously after deterministic ev
 
 APXOR follows a **single-main-branch workflow**. `main` is the canonical development branch.
 
-Existing feature branches are not treated as parallel development lines. Before deleting them, verify that they contain no commits ahead of `main`. As of the current repository state, the existing branches are all behind `main` and contain **0 commits ahead of `main`**, so no merge is required before cleanup.
+Existing feature branches are not treated as parallel development lines. Before deleting them, verify that they contain no commits ahead of `main`. As of the current repository state, the only branch is `main`, so there are no branches to merge or clean up.
 
 ## Roadmap
 
@@ -246,7 +255,7 @@ Existing feature branches are not treated as parallel development lines. Before 
 14. `/ai` — **status + incident implemented; conversational interface next**
 15. Dashboard API — **implemented**
 16. Dashboard authentication/frontend foundation — **implemented; UX and write workflows next**
-17. Production/integration/chaos testing — **next major phase**
+17. Production/integration/chaos testing — **in progress; operational health hardening added**
 18. Production observability and deployment verification — **pending**
 
 See [`docs/SECURITY_SPEC_V1.md`](docs/SECURITY_SPEC_V1.md) for the frozen v1 security boundary and production-readiness gates.
