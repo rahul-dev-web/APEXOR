@@ -29,6 +29,7 @@ def test_deep_health_reports_degraded_dependencies(monkeypatch) -> None:
                 "dashboard_auth": "not_configured",
             },
             "ready": False,
+            "core_ready": False,
         }
 
     monkeypatch.setattr("app.main.system_health", fake_system_health)
@@ -38,6 +39,32 @@ def test_deep_health_reports_degraded_dependencies(monkeypatch) -> None:
     body = response.json()
     assert body["status"] == "degraded"
     assert body["ready"] is False
+    assert body["core_ready"] is False
     assert body["checks"]["database"] == "unavailable"
     assert "GROQ_API_KEY" not in response.text
     assert "DASHBOARD_SESSION_SECRET" not in response.text
+
+
+def test_deep_health_stays_ready_when_advisory_services_are_missing(monkeypatch) -> None:
+    async def fake_system_health() -> dict[str, object]:
+        return {
+            "status": "degraded",
+            "checks": {
+                "database": "ok",
+                "ai": "not_configured",
+                "dashboard_auth": "not_configured",
+            },
+            "ready": True,
+            "core_ready": True,
+        }
+
+    monkeypatch.setattr("app.main.system_health", fake_system_health)
+    response = client.get("/health/deep")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["ready"] is True
+    assert body["core_ready"] is True
+    assert body["checks"]["ai"] == "not_configured"
+    assert body["checks"]["dashboard_auth"] == "not_configured"
