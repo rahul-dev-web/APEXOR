@@ -4,11 +4,11 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Backend security MVP: ~95% implemented.**
+**Backend security MVP: ~96% implemented.**
 
-**Overall APXOR v1 engineering scope: ~82–86% implemented.**
+**Overall APXOR v1 engineering scope: ~83–87% implemented.**
 
-These are engineering progress estimates, not production-readiness claims. The deterministic security core, recovery lifecycle, AI advisory layer, dashboard API/authentication foundation, and operational health checks are substantially implemented. Live Discord integration/chaos verification, broader command/resource coverage, production observability and deployment verification remain.
+These are engineering progress estimates, not production-readiness claims. The deterministic security core, recovery lifecycle, AI advisory layer, dashboard API/authentication foundation, conversational AI surface, and operational health checks are substantially implemented. Live Discord integration/chaos verification, broader resource recovery, production observability and deployment verification remain.
 
 ### Implemented
 
@@ -45,11 +45,13 @@ These are engineering progress estimates, not production-readiness claims. The d
 - Authenticated security overview with protection score, metrics, health and navigation
 - Dashboard views for security, incidents, events, recovery, snapshots and AI data
 - Safe dependency health snapshot exposing database, AI and dashboard-auth readiness without returning secret values
+- Authorized `/ai ask` conversational security analyst with bounded questions, server security context, cooldown protection and advisory-only execution
+- Conversational AI tests covering prompt safety, context filtering and request bounds
 
 ### Remaining
 
-- Complete APXOR command coverage for advanced editing, moderation, snapshots, recovery and configuration
-- `/ai ask` conversational security analyst and dedicated AI channel
+- Dedicated AI channel / multi-turn conversation persistence
+- Complete APXOR command coverage for advanced editing, snapshots, recovery and configuration
 - Broader Discord resource recovery and verification coverage
 - Production external queue / worker separation
 - Reconciliation hardening for all eventually-consistent Discord audit/resource cases
@@ -229,6 +231,8 @@ A later low-risk event cannot silently clear active `LOCKDOWN`, `RECOVERING`, or
 
 The Groq threat analyst receives normalized security context only. Its output is schema-constrained and persisted for auditability. AI recommendations are advisory and are never executed as arbitrary Discord operations.
 
+The `/ai ask` surface is separately bounded: it requires `AI_USE`, accepts only a short operator question, passes only a small server-security context, applies a per-user/guild cooldown, grants no tools, and does not persist arbitrary conversation content. AI failure is returned as an advisory error and cannot affect deterministic security controls.
+
 The security pipeline launches AI analysis asynchronously after deterministic event persistence, so model latency or failure cannot block containment or recovery.
 
 ## Branch policy
@@ -252,7 +256,7 @@ Existing feature branches are not treated as parallel development lines. Before 
 11. Lockdown — **implemented**
 12. Incident Engine — **implemented**
 13. Groq Threat Analyst — **implemented as advisory runtime + persistence**
-14. `/ai` — **status + incident implemented; conversational interface next**
+14. `/ai` — **status + incident + conversational ask implemented; dedicated AI channel next**
 15. Dashboard API — **implemented**
 16. Dashboard authentication/frontend foundation — **implemented; UX and write workflows next**
 17. Production/integration/chaos testing — **in progress; operational health hardening added**
