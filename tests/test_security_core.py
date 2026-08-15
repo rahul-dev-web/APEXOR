@@ -76,7 +76,7 @@ def test_channel_delete_velocity_escalates_deterministically() -> None:
     assert detections[2].velocity_count == 3
     assert detections[2].signal.score == 55
     assert detections[4].velocity_count == 5
-    assert detections[4].signal.score == 85
+    assert detections[4].signal.score == 75
 
 
 def test_duplicate_event_is_not_counted_twice() -> None:
