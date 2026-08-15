@@ -11,6 +11,7 @@ from app.api.dashboard_auth import require_dashboard_guild_access, require_dashb
 from app.core.config import settings
 from app.core.constants import Capability
 from app.database.session import SessionLocal
+from app.models.admin_changes import AdminChange
 from app.models.ai import AIThreatAssessment
 from app.models.capabilities import UserCapability
 from app.models.events import SecurityEventLog, SecurityIncident
@@ -99,6 +100,34 @@ async def capabilities(guild_id: int, limit: int = 200) -> list[dict]:
                 "enabled": row.enabled,
                 "granted_by_discord_id": row.granted_by_discord_id,
                 "expires_at": row.expires_at,
+                "created_at": row.created_at,
+            }
+            for row in rows
+        ]
+
+
+@router.get("/guilds/{guild_id}/admin-changes", dependencies=[Depends(require_dashboard_guild_access)])
+async def admin_changes(guild_id: int, limit: int = 50) -> list[dict]:
+    """Return the control-plane audit trail for dashboard/security administration."""
+    if SessionLocal is None:
+        raise HTTPException(status_code=503, detail="Database is unavailable.")
+    limit = max(1, min(limit, 200))
+    async with SessionLocal() as session:
+        guild = await _guild_or_404(session, guild_id)
+        rows = (await session.scalars(
+            select(AdminChange)
+            .where(AdminChange.guild_id == guild.id)
+            .order_by(desc(AdminChange.created_at))
+            .limit(limit)
+        )).all()
+        return [
+            {
+                "id": row.id,
+                "actor_id": row.actor_discord_id,
+                "action": row.action,
+                "target_id": row.target_discord_id,
+                "capability": row.capability,
+                "metadata": row.metadata_json,
                 "created_at": row.created_at,
             }
             for row in rows
