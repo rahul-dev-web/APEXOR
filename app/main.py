@@ -8,7 +8,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.dashboard_auth import router as dashboard_auth_router
 from app.api.overview import router as overview_router
 from app.core.config import settings
-from app.core.health import database_health
+from app.core.health import database_health, system_health
 from app.core.logging import configure_logging
 
 configure_logging(settings.log_level)
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="APXOR API",
-    version="0.3.1",
+    version="0.3.2",
     description="Security-first Discord anti-nuke platform API.",
 )
 
@@ -51,6 +51,13 @@ async def readiness() -> JSONResponse:
         status_code=status_code,
         content={"status": "ready" if db_ok else "not_ready", "service": "apxor-api", "database": db_status},
     )
+
+
+@app.get("/health/deep")
+async def deep_health() -> JSONResponse:
+    """Safe operational dependency snapshot; never returns secret values."""
+    snapshot = await system_health()
+    return JSONResponse(status_code=200 if snapshot["ready"] else 503, content=snapshot)
 
 
 @app.get("/")
