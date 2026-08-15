@@ -79,7 +79,7 @@ class ConversationalSecurityAnalyst:
                 model=settings.groq_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
-                max_tokens=700,
+                max_completion_tokens=700,
             )
             content = response.choices[0].message.content if response.choices else None
             if not content:
