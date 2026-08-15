@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.dashboard import router as dashboard_router
@@ -15,8 +16,19 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="APXOR API",
-    version="0.3.0",
+    version="0.3.1",
     description="Security-first Discord anti-nuke platform API.",
+)
+
+# The dashboard uses an HttpOnly session cookie. When the frontend is deployed
+# separately (for example Vercel -> Render), browser credentials are cross-origin
+# and must be explicitly allowed. Never use a wildcard origin with credentials.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.dashboard_frontend_url.rstrip("/")],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Accept", "Content-Type", "X-APXOR-Dashboard-Key"],
 )
 
 app.include_router(dashboard_router)
