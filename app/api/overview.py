@@ -30,7 +30,7 @@ async def overview(guild_id: int) -> dict:
     async with SessionLocal() as session:
         guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == guild_id))
         if guild is None:
-            raise HTTPException(status_code=404, detail="Guild is not registered with APXOR.")
+            raise HTTPException(status_code=404, detail="Guild is not registered with APEXOR.")
 
         config = await session.scalar(select(SecurityConfig).where(SecurityConfig.guild_id == guild.id))
         critical_events = await session.scalar(

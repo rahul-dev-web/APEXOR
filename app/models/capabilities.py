@@ -7,7 +7,7 @@ from app.database.base import Base
 
 
 class UserCapability(Base):
-    """Guild-scoped APXOR capability grant for a Discord user."""
+    """Guild-scoped APEXOR capability grant for a Discord user."""
 
     __tablename__ = "user_capabilities"
     __table_args__ = (

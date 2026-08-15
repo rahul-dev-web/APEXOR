@@ -23,7 +23,7 @@ REQUIRED_PERMISSIONS = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Read-only APXOR Discord deployment preflight check."
+        description="Read-only APEXOR Discord deployment preflight check."
     )
     parser.add_argument(
         "--guild-id",
@@ -72,7 +72,7 @@ async def run(guild_id: int) -> int:
         else:
             print("role_hierarchy: OK")
 
-        # The owner is intentionally outside APXOR's enforcement boundary.
+        # The owner is intentionally outside APEXOR's enforcement boundary.
         # This check only confirms that the bot can see the owner role and does
         # not attempt to modify any Discord resource.
         owner_member = await guild.fetch_member(guild.owner_id)

@@ -5,10 +5,10 @@ import discord
 
 @dataclass(frozen=True, slots=True)
 class PermissionPolicy:
-    """Security policy for permissions APXOR treats as privileged.
+    """Security policy for permissions APEXOR treats as privileged.
 
     The policy is intentionally stricter than Discord's normal moderation model:
-    operators should use APXOR capabilities instead of receiving destructive
+    operators should use APEXOR capabilities instead of receiving destructive
     Discord permissions directly.
     """
 

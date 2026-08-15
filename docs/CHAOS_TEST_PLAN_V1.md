@@ -1,6 +1,6 @@
-# APXOR v1 — Chaos & Resilience Test Plan
+# APEXOR v1 — Chaos & Resilience Test Plan
 
-This document defines the failure-mode and adversarial test contract for APXOR v1.
+This document defines the failure-mode and adversarial test contract for APEXOR v1.
 
 ## 1. Deterministic security scenarios
 
@@ -20,7 +20,7 @@ This document defines the failure-mode and adversarial test contract for APXOR v
 
 ## 2. Failure isolation
 
-APXOR security enforcement must continue to operate when non-critical dependencies fail.
+APEXOR security enforcement must continue to operate when non-critical dependencies fail.
 
 - Groq unavailable → deterministic rules remain authoritative.
 - Database temporarily unavailable → runtime decision must not depend on a successful persistence write.
@@ -42,7 +42,7 @@ Recovery tests must verify:
 
 ## 4. Production gates
 
-APXOR v1 is not considered production-ready until:
+APEXOR v1 is not considered production-ready until:
 
 - deterministic security tests pass;
 - chaos tests pass;
@@ -54,4 +54,4 @@ APXOR v1 is not considered production-ready until:
 
 ## 5. Test boundary
 
-These tests validate APXOR's own security logic and controlled test-guild behavior. They must not be executed against production Discord guilds or third-party servers without authorization.
+These tests validate APEXOR's own security logic and controlled test-guild behavior. They must not be executed against production Discord guilds or third-party servers without authorization.

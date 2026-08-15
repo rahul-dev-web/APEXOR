@@ -63,8 +63,8 @@ class GroqThreatAnalyst:
         client = self._get_client()
         schema = ThreatAssessment.model_json_schema()
         prompt = (
-            "You are APXOR's advisory Discord security analyst. Analyze only the supplied "
-            "security incident. Do not invent events. The deterministic APXOR policy engine "
+            "You are APEXOR's advisory Discord security analyst. Analyze only the supplied "
+            "security incident. Do not invent events. The deterministic APEXOR policy engine "
             "is authoritative. You cannot execute tools, modify Discord, or override policy. "
             "Return a concise classification and explanation.\n\n"
             f"INCIDENT:\n{json.dumps(incident, separators=(',', ':'), sort_keys=True, default=str)}"
@@ -75,7 +75,7 @@ class GroqThreatAnalyst:
             temperature=0,
             response_format={
                 "type": "json_schema",
-                "json_schema": {"name": "apxor_threat_assessment", "schema": schema, "strict": True},
+                "json_schema": {"name": "apexor_threat_assessment", "schema": schema, "strict": True},
             },
         )
         content = response.choices[0].message.content

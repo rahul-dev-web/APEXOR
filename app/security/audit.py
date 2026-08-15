@@ -56,7 +56,7 @@ def _actions_for(event_type: SecurityEventType) -> tuple[discord.AuditLogAction,
 
 
 def event_type_for_audit_action(action: discord.AuditLogAction) -> SecurityEventType | None:
-    """Translate a Discord audit action into APXOR's normalized event type."""
+    """Translate a Discord audit action into APEXOR's normalized event type."""
     for event_type in SecurityEventType:
         if action in _actions_for(event_type):
             return event_type

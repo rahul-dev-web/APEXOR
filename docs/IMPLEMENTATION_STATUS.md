@@ -1,4 +1,4 @@
-# APXOR Implementation Status
+# APEXOR Implementation Status
 
 Updated after the recovery-command milestone.
 

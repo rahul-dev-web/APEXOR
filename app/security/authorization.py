@@ -12,7 +12,7 @@ from app.models.guild import Guild
 
 
 class AuthorizationService:
-    """Server-side capability gate for APXOR-controlled operations.
+    """Server-side capability gate for APEXOR-controlled operations.
 
     Discord owner authority is checked against the current persisted guild owner
     identity. Non-owners must have an enabled, non-expired capability grant.
@@ -58,7 +58,7 @@ class AuthorizationService:
     ) -> UserCapability:
         guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == guild_id))
         if guild is None:
-            raise ValueError("Guild is not initialized in APXOR")
+            raise ValueError("Guild is not initialized in APEXOR")
         if granted_by_discord_id != guild.owner_discord_id:
             allowed = await self.is_allowed(
                 session,

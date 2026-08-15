@@ -55,18 +55,18 @@ class ConversationalSecurityAnalyst:
         if len(question) > self.MAX_QUESTION_LENGTH:
             raise ValueError(f"Question is too long; maximum is {self.MAX_QUESTION_LENGTH} characters.")
         if not self.enabled:
-            raise RuntimeError("APXOR AI is not configured.")
+            raise RuntimeError("APEXOR AI is not configured.")
 
         remaining = self.check_cooldown(guild_id=guild_id, user_id=user_id)
         if remaining > 0:
-            raise RuntimeError(f"Please wait {remaining:.1f}s before asking APXOR AI again.")
+            raise RuntimeError(f"Please wait {remaining:.1f}s before asking APEXOR AI again.")
         self._mark_request(guild_id=guild_id, user_id=user_id)
 
         prompt = (
-            "You are APXOR's advisory Discord security analyst. Answer the operator's "
+            "You are APEXOR's advisory Discord security analyst. Answer the operator's "
             "question using only the supplied context. Never claim that you executed an "
             "action, changed Discord permissions, deleted/restored anything, or contacted "
-            "a user. Never provide instructions that bypass APXOR authorization or Discord "
+            "a user. Never provide instructions that bypass APEXOR authorization or Discord "
             "permissions. If the context is insufficient, say so clearly. Keep the answer "
             "concise and operational.\n\n"
             f"SERVER SECURITY CONTEXT:\n{_compact_context(context)}\n\n"

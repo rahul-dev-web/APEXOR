@@ -13,7 +13,7 @@ async def test_liveness_endpoint() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
-    assert response.json()["service"] == "apxor-api"
+    assert response.json()["service"] == "apexor-api"
 
 
 @pytest.mark.asyncio

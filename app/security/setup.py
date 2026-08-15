@@ -18,13 +18,13 @@ logger = logging.getLogger(__name__)
 class GuildAutoSetup:
     """Idempotent first-line protection bootstrap for a Discord guild."""
 
-    CATEGORY_NAME = "APXOR SECURITY"
-    SECURITY_ROLE_NAME = "APXOR-SECURITY"
+    CATEGORY_NAME = "APEXOR SECURITY"
+    SECURITY_ROLE_NAME = "APEXOR-SECURITY"
     CHANNELS: tuple[tuple[str, str], ...] = (
-        ("apxor-alerts", "ALERTS"),
-        ("apxor-critical", "CRITICAL"),
-        ("apxor-audit", "AUDIT"),
-        ("apxor-recovery", "RECOVERY"),
+        ("apexor-alerts", "ALERTS"),
+        ("apexor-critical", "CRITICAL"),
+        ("apexor-audit", "AUDIT"),
+        ("apexor-recovery", "RECOVERY"),
     )
 
     def __init__(self) -> None:
@@ -71,7 +71,7 @@ class GuildAutoSetup:
                 await self.snapshots.capture_guild(session, guild, source="AUTO_SETUP")
 
         await session.commit()
-        logger.info("APXOR auto-setup complete: guild=%s", guild.id)
+        logger.info("APEXOR auto-setup complete: guild=%s", guild.id)
         return True
 
     async def _ensure_security_role(self, session: AsyncSession, guild: discord.Guild) -> discord.Role:
@@ -80,7 +80,7 @@ class GuildAutoSetup:
             role = await guild.create_role(
                 name=self.SECURITY_ROLE_NAME,
                 permissions=discord.Permissions.none(),
-                reason="APXOR security bootstrap",
+                reason="APEXOR security bootstrap",
             )
 
         row = await session.scalar(
@@ -111,7 +111,7 @@ class GuildAutoSetup:
         }
         if guild.owner is not None:
             overwrites[guild.owner] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
-        return await guild.create_category(self.CATEGORY_NAME, overwrites=overwrites, reason="APXOR security bootstrap")
+        return await guild.create_category(self.CATEGORY_NAME, overwrites=overwrites, reason="APEXOR security bootstrap")
 
     async def _ensure_channels(
         self, session: AsyncSession, guild: discord.Guild, category: discord.CategoryChannel, security_role: discord.Role
@@ -119,7 +119,7 @@ class GuildAutoSetup:
         for channel_name, channel_type in self.CHANNELS:
             channel = discord.utils.get(category.channels, name=channel_name)
             if channel is None:
-                channel = await guild.create_text_channel(channel_name, category=category, reason="APXOR security bootstrap")
+                channel = await guild.create_text_channel(channel_name, category=category, reason="APEXOR security bootstrap")
 
             row = await session.scalar(
                 select(SecurityChannel).where(

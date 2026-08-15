@@ -1,14 +1,14 @@
-# APXOR Permission Matrix v1
+# APEXOR Permission Matrix v1
 
 ## Principles
 
-- Owner remains above APXOR in Discord's role hierarchy.
-- APXOR should request only permissions required by enabled modules.
+- Owner remains above APEXOR in Discord's role hierarchy.
+- APEXOR should request only permissions required by enabled modules.
 - Operator roles should normally have **no raw destructive Discord permissions**.
-- `ADMINISTRATOR` is prohibited for non-owner roles by APXOR policy.
+- `ADMINISTRATOR` is prohibited for non-owner roles by APEXOR policy.
 - Capability authorization is separate from Discord permission possession.
 
-## Baseline APXOR bot permissions
+## Baseline APEXOR bot permissions
 
 | Discord permission | Default | Purpose |
 |---|---|---|
@@ -29,7 +29,7 @@
 
 ## Operator raw permissions
 
-| Operator function | Raw Discord destructive permission | APXOR capability |
+| Operator function | Raw Discord destructive permission | APEXOR capability |
 |---|---:|---|
 | Channel manager | No | CHANNEL_CREATE / EDIT / DELETE |
 | Role manager | No | ROLE_CREATE / EDIT / DELETE |
@@ -40,9 +40,9 @@
 
 ## Hierarchy invariant
 
-`Owner > APXOR bot role > protected/operator roles > normal roles > @everyone`
+`Owner > APEXOR bot role > protected/operator roles > normal roles > @everyone`
 
-The exact role ordering may vary by guild, but APXOR must verify that it can manage every role/resource it is expected to manage. If a protected role is above APXOR, protection status becomes degraded.
+The exact role ordering may vary by guild, but APEXOR must verify that it can manage every role/resource it is expected to manage. If a protected role is above APEXOR, protection status becomes degraded.
 
 ## Privileged-role audit
 

@@ -1,4 +1,4 @@
-# APXOR Event & Risk Matrix v1
+# APEXOR Event & Risk Matrix v1
 
 ## Deterministic baseline
 
@@ -23,7 +23,7 @@ All final scores are capped at 100.
 These should be treated as emergency/critical policy candidates independent of AI:
 
 - Non-owner `ADMINISTRATOR` grant
-- APXOR bot/security role modification or deletion
+- APEXOR bot/security role modification or deletion
 - Protected security channel deletion
 - Repeated destructive operations crossing emergency thresholds
 - Unauthorized privilege escalation immediately followed by destructive activity

@@ -1,4 +1,4 @@
-name: APXOR Security Checks
+name: APEXOR Security Checks
 
 on:
   push:

@@ -10,13 +10,13 @@ def test_health() -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
-    assert response.json()["service"] == "apxor-api"
+    assert response.json()["service"] == "apexor-api"
 
 
 def test_root() -> None:
     response = client.get("/")
     assert response.status_code == 200
-    assert response.json()["service"] == "APXOR"
+    assert response.json()["service"] == "APEXOR"
 
 
 def test_deep_health_reports_degraded_dependencies(monkeypatch) -> None:

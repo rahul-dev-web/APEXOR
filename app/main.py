@@ -15,7 +15,7 @@ configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="APXOR API",
+    title="APEXOR API",
     version="0.3.3",
     description="Security-first Discord anti-nuke platform API.",
 )
@@ -28,7 +28,7 @@ app.add_middleware(
     allow_origins=[settings.dashboard_frontend_url.rstrip("/")],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Accept", "Content-Type", "X-APXOR-Dashboard-Key", "X-APXOR-CSRF-Token"],
+    allow_headers=["Accept", "Content-Type", "X-APEXOR-Dashboard-Key", "X-APEXOR-CSRF-Token"],
 )
 
 app.include_router(dashboard_router)
@@ -39,7 +39,7 @@ app.include_router(overview_router)
 @app.get("/health")
 async def health() -> dict[str, str]:
     """Liveness endpoint: process is running and able to serve HTTP."""
-    return {"status": "ok", "service": "apxor-api", "environment": settings.app_env}
+    return {"status": "ok", "service": "apexor-api", "environment": settings.app_env}
 
 
 @app.get("/health/ready")
@@ -49,7 +49,7 @@ async def readiness() -> JSONResponse:
     status_code = 200 if db_ok else 503
     return JSONResponse(
         status_code=status_code,
-        content={"status": "ready" if db_ok else "not_ready", "service": "apxor-api", "database": db_status},
+        content={"status": "ready" if db_ok else "not_ready", "service": "apexor-api", "database": db_status},
     )
 
 
@@ -62,4 +62,4 @@ async def deep_health() -> JSONResponse:
 
 @app.get("/")
 async def root() -> dict[str, str]:
-    return {"service": "APXOR", "status": "online"}
+    return {"service": "APEXOR", "status": "online"}

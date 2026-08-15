@@ -31,7 +31,7 @@ class CapabilityMutation(BaseModel):
     expires_at: datetime | None = None
 
 
-async def require_dashboard_key(x_apxor_dashboard_key: str | None = Header(default=None)) -> None:
+async def require_dashboard_key(x_apexor_dashboard_key: str | None = Header(default=None)) -> None:
     """Legacy service-to-service authentication for non-guild dashboard endpoints."""
     configured = settings.dashboard_api_key
     if not configured:
@@ -39,14 +39,14 @@ async def require_dashboard_key(x_apxor_dashboard_key: str | None = Header(defau
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Dashboard API authentication is not configured.",
         )
-    if not x_apxor_dashboard_key or not secrets.compare_digest(x_apxor_dashboard_key, configured):
+    if not x_apexor_dashboard_key or not secrets.compare_digest(x_apexor_dashboard_key, configured):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid dashboard credentials.")
 
 
 async def _guild_or_404(session, guild_id: int) -> Guild:
     guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == guild_id))
     if guild is None:
-        raise HTTPException(status_code=404, detail="Guild is not registered with APXOR.")
+        raise HTTPException(status_code=404, detail="Guild is not registered with APEXOR.")
     return guild
 
 
@@ -80,7 +80,7 @@ async def security_overview(guild_id: int) -> dict:
 
 @router.get("/guilds/{guild_id}/capabilities", dependencies=[Depends(require_dashboard_guild_access)])
 async def capabilities(guild_id: int, limit: int = 200) -> list[dict]:
-    """Return active and inactive APXOR capability grants for dashboard management."""
+    """Return active and inactive APEXOR capability grants for dashboard management."""
     if SessionLocal is None:
         raise HTTPException(status_code=503, detail="Database is unavailable.")
     limit = max(1, min(limit, 500))
@@ -140,7 +140,7 @@ async def grant_capability(
     payload: CapabilityMutation,
     principal=Depends(require_dashboard_mutation_access),
 ) -> dict:
-    """Grant an APXOR capability using owner/security-manager authority plus CSRF."""
+    """Grant an APEXOR capability using owner/security-manager authority plus CSRF."""
     if SessionLocal is None:
         raise HTTPException(status_code=503, detail="Database is unavailable.")
     async with SessionLocal() as session:
@@ -182,7 +182,7 @@ async def revoke_capability(
     payload: CapabilityMutation,
     principal=Depends(require_dashboard_mutation_access),
 ) -> dict[str, bool]:
-    """Disable an APXOR capability grant; owner/security-manager authority is required."""
+    """Disable an APEXOR capability grant; owner/security-manager authority is required."""
     if SessionLocal is None:
         raise HTTPException(status_code=503, detail="Database is unavailable.")
     async with SessionLocal() as session:
@@ -287,4 +287,4 @@ async def snapshots(guild_id: int, limit: int = 50) -> list[dict]:
 
 @router.get("/health", dependencies=[Depends(require_dashboard_key)])
 async def dashboard_health() -> dict[str, str]:
-    return {"status": "ok", "service": "apxor-dashboard-api"}
+    return {"status": "ok", "service": "apexor-dashboard-api"}

@@ -87,7 +87,7 @@ class ProtectionStateMachine:
             return TransitionResult(self._state, self._state, False)
         if not self.can_transition(target):
             raise InvalidProtectionTransition(
-                f"Invalid APXOR protection transition: {self._state} -> {target}"
+                f"Invalid APEXOR protection transition: {self._state} -> {target}"
             )
         previous = self._state
         self._state = target

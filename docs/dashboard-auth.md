@@ -1,4 +1,4 @@
-# APXOR Dashboard Authentication
+# APEXOR Dashboard Authentication
 
 The dashboard now supports Discord OAuth2 for browser sessions while retaining the server-to-server `DASHBOARD_API_KEY` path for internal tooling.
 
@@ -15,7 +15,7 @@ DASHBOARD_SESSION_TTL_SECONDS=3600
 DASHBOARD_FRONTEND_URL=https://<dashboard-host>
 ```
 
-The OAuth flow requests only `identify guilds`. APXOR grants dashboard access for guilds where the authenticated Discord user is the guild owner or has `ADMINISTRATOR` / `MANAGE_GUILD`.
+The OAuth flow requests only `identify guilds`. APEXOR grants dashboard access for guilds where the authenticated Discord user is the guild owner or has `ADMINISTRATOR` / `MANAGE_GUILD`.
 
 ## Security properties
 

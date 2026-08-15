@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class SecurityNotifier:
-    """Deliver bounded security alerts to APXOR's protected channels and owner."""
+    """Deliver bounded security alerts to APEXOR's protected channels and owner."""
 
     async def notify(
         self,
@@ -72,11 +72,11 @@ class SecurityNotifier:
         reason: str,
     ) -> str:
         return (
-            f"🚨 **APXOR {severity} SECURITY ALERT**\n"
+            f"🚨 **APEXOR {severity} SECURITY ALERT**\n"
             f"Event: `{event_type}`\n"
             f"Actor: `{actor_id or 'unknown'}`\n"
             f"Target: `{target_id or 'unknown'}`\n"
             f"Risk: **{risk_score}/100**\n"
             f"Reason: `{reason}`\n"
-            f"Action: APXOR deterministic security pipeline engaged."
+            f"Action: APEXOR deterministic security pipeline engaged."
         )

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Activity, AlertTriangle, Bot, Database, LockKeyhole, RefreshCw, ShieldCheck, Siren, Sparkles, Undo2, Users } from 'lucide-react'
 
-const API_BASE = import.meta.env.VITE_APXOR_API_URL || ''
+const API_BASE = import.meta.env.VITE_APEXOR_API_URL || ''
 
 const NAV = [
   ['overview', 'Overview'],
@@ -35,10 +35,10 @@ function Login({ configured }) {
       <div className="login-card">
         <div className="brand-mark"><ShieldCheck size={28} /></div>
         <span className="eyebrow">SECURITY-FIRST DISCORD PROTECTION</span>
-        <h1>APXOR Security Center</h1>
+        <h1>APEXOR Security Center</h1>
         <p>Monitor anti-nuke protection, incidents, recovery and AI threat analysis from one authenticated console.</p>
         <a className="primary-button" href={`${API_BASE}/api/dashboard/auth/login`}>Continue with Discord</a>
-        {!configured && <small>Set VITE_APXOR_API_URL when the dashboard is hosted separately from the API.</small>}
+        {!configured && <small>Set VITE_APEXOR_API_URL when the dashboard is hosted separately from the API.</small>}
       </div>
     </main>
   )
@@ -111,7 +111,7 @@ export default function App() {
     try {
       const response = await api(`/api/dashboard/guilds/${guildId}/capabilities/${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-APXOR-CSRF-Token': session.csrf_token },
+        headers: { 'Content-Type': 'application/json', 'X-APEXOR-CSRF-Token': session.csrf_token },
         body: JSON.stringify(payload),
       })
       if (!response.ok) throw new Error((await response.text()) || `Mutation failed: ${response.status}`)
@@ -142,13 +142,13 @@ export default function App() {
     ['Recovery', protection.recovery_enabled ? 'Enabled' : 'Disabled'], ['AI', 'Threat analysis'],
   ], [protection.recovery_enabled])
 
-  if (loading && session === null) return <div className="boot">Loading APXOR…</div>
+  if (loading && session === null) return <div className="boot">Loading APEXOR…</div>
   if (session === false) return <Login configured={Boolean(API_BASE)} />
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="logo"><div className="brand-mark"><ShieldCheck size={22} /></div><div><b>APXOR</b><span>Security Center</span></div></div>
+        <div className="logo"><div className="brand-mark"><ShieldCheck size={22} /></div><div><b>APEXOR</b><span>Security Center</span></div></div>
         <nav>{NAV.map(([key, label]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}>{label}</button>)}</nav>
         <div className="sidebar-bottom"><div className="mini-status"><i /> Protection engine online</div><button onClick={logout}>Sign out</button></div>
       </aside>
@@ -167,7 +167,7 @@ export default function App() {
 
         {isOverview && data && <>
           <section className="hero-card">
-            <div><span className="eyebrow">{data.guild?.name || 'Discord Server'}</span><h1>Protection is <span>active</span></h1><p>APXOR is continuously evaluating permissions, destructive activity and recovery state.</p></div>
+            <div><span className="eyebrow">{data.guild?.name || 'Discord Server'}</span><h1>Protection is <span>active</span></h1><p>APEXOR is continuously evaluating permissions, destructive activity and recovery state.</p></div>
             <div className="score-ring"><strong>{score}</strong><span>score</span></div>
           </section>
           <section className="stats-grid">
@@ -187,7 +187,7 @@ export default function App() {
 
         {!isOverview && view === 'capabilities' && <>
           <section className="panel">
-            <div className="panel-head"><h3>Grant APXOR capability</h3><span className="badge good"><Users size={13} /> SECURITY MANAGE</span></div>
+            <div className="panel-head"><h3>Grant APEXOR capability</h3><span className="badge good"><Users size={13} /> SECURITY MANAGE</span></div>
             <form className="operator-form" onSubmit={grantCapability}>
               <label>Discord user ID<input value={operatorUserId} onChange={(e) => setOperatorUserId(e.target.value)} placeholder="123456789012345678" inputMode="numeric" /></label>
               <label>Capability<select value={operatorCapability} onChange={(e) => setOperatorCapability(e.target.value)}>{CAPABILITIES.map((capability) => <option key={capability} value={capability}>{capability}</option>)}</select></label>

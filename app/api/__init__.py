@@ -1,1 +1,1 @@
-"""HTTP API modules for APXOR."""
+"""HTTP API modules for APEXOR."""

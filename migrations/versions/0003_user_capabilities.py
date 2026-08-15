@@ -1,4 +1,4 @@
-"""Add guild-scoped APXOR capability grants.
+"""Add guild-scoped APEXOR capability grants.
 
 Revision ID: 0003_user_capabilities
 Revises: 0002_security_events_incidents

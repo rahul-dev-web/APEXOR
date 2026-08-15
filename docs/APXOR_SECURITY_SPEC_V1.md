@@ -1,11 +1,11 @@
-# APXOR Security Specification v1
+# APEXOR Security Specification v1
 
 **Status:** Frozen baseline for implementation  
 **Scope:** Anti-nuke/security core, authorization, recovery, AI boundary
 
 ## 1. Security objective
 
-APXOR does not claim that Discord destructive actions are mathematically impossible. The target is to make protected destructive permissions unavailable to manageable non-owner roles by default; detect privilege escalation and destructive behavior in real time; correlate Gateway activity with Discord Audit Logs; apply deterministic containment where Discord permits it; reconstruct lost server state from snapshots; and maintain an auditable security trail.
+APEXOR does not claim that Discord destructive actions are mathematically impossible. The target is to make protected destructive permissions unavailable to manageable non-owner roles by default; detect privilege escalation and destructive behavior in real time; correlate Gateway activity with Discord Audit Logs; apply deterministic containment where Discord permits it; reconstruct lost server state from snapshots; and maintain an auditable security trail.
 
 ## 2. Root-of-trust hierarchy
 
@@ -37,33 +37,33 @@ Critical permissions:
 - `MANAGE_ROLES`
 - `MANAGE_WEBHOOKS`
 
-When enforcement is enabled, these permissions must not be present on manageable non-owner roles. APXOR must never rewrite `@everyone`, managed/integration roles, roles at or above APXOR's top role, or the guild owner's top role.
+When enforcement is enabled, these permissions must not be present on manageable non-owner roles. APEXOR must never rewrite `@everyone`, managed/integration roles, roles at or above APEXOR's top role, or the guild owner's top role.
 
-## 4. APXOR capability model
+## 4. APEXOR capability model
 
-Discord permissions and APXOR capabilities are intentionally separate.
+Discord permissions and APEXOR capabilities are intentionally separate.
 
 | Capability | Purpose |
 |---|---|
-| `CHANNEL_CREATE` | Create channels through APXOR |
+| `CHANNEL_CREATE` | Create channels through APEXOR |
 | `CHANNEL_EDIT` | Edit channel metadata |
-| `CHANNEL_DELETE` | Delete channels through APXOR |
-| `ROLE_CREATE` | Create roles through APXOR |
+| `CHANNEL_DELETE` | Delete channels through APEXOR |
+| `ROLE_CREATE` | Create roles through APEXOR |
 | `ROLE_EDIT` | Edit role metadata |
-| `ROLE_DELETE` | Delete roles through APXOR |
-| `MOD_KICK` | Kick members through APXOR |
-| `MOD_BAN` | Ban members through APXOR |
-| `MOD_TIMEOUT` | Timeout members through APXOR |
+| `ROLE_DELETE` | Delete roles through APEXOR |
+| `MOD_KICK` | Kick members through APEXOR |
+| `MOD_BAN` | Ban members through APEXOR |
+| `MOD_TIMEOUT` | Timeout members through APEXOR |
 | `SECURITY_VIEW` | Read security state |
 | `SECURITY_MANAGE` | Manage protected security resources |
-| `AI_USE` | Use APXOR AI security analysis |
+| `AI_USE` | Use APEXOR AI security analysis |
 | `LOG_VIEW` | Read security logs |
 
 Owner authority is always checked against the current Discord guild owner ID.
 
 ## 5. Protected resources
 
-APXOR treats its bot role, security roles, critical alert/log channels, security category, and security configuration as protected assets. Protected-resource modification escalates independently of ordinary event velocity.
+APEXOR treats its bot role, security roles, critical alert/log channels, security category, and security configuration as protected assets. Protected-resource modification escalates independently of ordinary event velocity.
 
 ## 6. Event monitoring matrix
 
@@ -91,7 +91,7 @@ Gateway signals are normalized and deduplicated. REST Audit Logs provide fallbac
 | Protected resource modification | protected-target escalation |
 | Repeated destructive actions | velocity escalation |
 | Mixed destructive action families | correlation escalation |
-| APXOR resource tampering | emergency escalation |
+| APEXOR resource tampering | emergency escalation |
 
 Risk states are deterministic and versioned in code. AI must not override them.
 
@@ -120,7 +120,7 @@ Recovery must be idempotent, dependency-aware, priority-aware, rate-limit-aware,
 
 Priority:
 
-1. APXOR security resources
+1. APEXOR security resources
 2. Protected resources
 3. Structural dependencies/categories
 4. Ordinary resources
@@ -155,7 +155,7 @@ Use stable fingerprints/audit IDs for idempotency and periodically reconcile ser
 
 ## 13. Security status contract
 
-`FULLY PROTECTED` should only be exposed when the current owner is identified, APXOR is connected, required permissions are available, role hierarchy is valid, critical permission policy is healthy, security resources are protected, monitoring is active, persistence is healthy, and snapshot/recovery is healthy.
+`FULLY PROTECTED` should only be exposed when the current owner is identified, APEXOR is connected, required permissions are available, role hierarchy is valid, critical permission policy is healthy, security resources are protected, monitoring is active, persistence is healthy, and snapshot/recovery is healthy.
 
 Otherwise expose `DEGRADED`, `VULNERABLE`, or `LOCKDOWN` as appropriate.
 
@@ -200,6 +200,6 @@ Otherwise expose `DEGRADED`, `VULNERABLE`, or `LOCKDOWN` as appropriate.
 5. Security mutations are idempotent.
 6. Recovery is rate-limit-aware.
 7. Security must degrade gracefully when AI is unavailable.
-8. APXOR must not claim 100% protection.
+8. APEXOR must not claim 100% protection.
 9. Browser clients must never receive the dashboard service secret.
 10. Every future security feature must preserve this boundary model.

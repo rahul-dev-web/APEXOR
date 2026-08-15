@@ -70,7 +70,7 @@ class RecoveryOrchestrator:
     async def start(self) -> None:
         if self._worker is None or self._worker.done():
             self._stopping = False
-            self._worker = asyncio.create_task(self._run(), name="apxor-recovery-worker")
+            self._worker = asyncio.create_task(self._run(), name="apexor-recovery-worker")
             logger.info("Recovery orchestrator started")
 
     async def stop(self) -> None:

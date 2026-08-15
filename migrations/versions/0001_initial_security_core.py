@@ -1,4 +1,4 @@
-"""Create initial APXOR security core tables.
+"""Create initial APEXOR security core tables.
 
 Revision ID: 0001_initial_security_core
 Revises:

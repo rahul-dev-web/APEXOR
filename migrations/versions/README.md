@@ -1,3 +1,3 @@
 # Alembic versions
 
-Database migrations for APXOR live in this directory.
+Database migrations for APEXOR live in this directory.

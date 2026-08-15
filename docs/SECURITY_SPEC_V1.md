@@ -1,10 +1,10 @@
-# APXOR Security Specification v1
+# APEXOR Security Specification v1
 
 ## 1. Security objective
 
-APXOR is a security-first Discord anti-nuke platform. Its objective is to make unauthorized destructive operations unavailable by default, detect privilege escalation and destructive behavior in real time, contain incidents where Discord permits, reconstruct recoverable server state, and maintain an auditable security trail.
+APEXOR is a security-first Discord anti-nuke platform. Its objective is to make unauthorized destructive operations unavailable by default, detect privilege escalation and destructive behavior in real time, contain incidents where Discord permits, reconstruct recoverable server state, and maintain an auditable security trail.
 
-APXOR does **not** claim that Discord actions can be intercepted before execution or that deleted Discord state can always be perfectly resurrected.
+APEXOR does **not** claim that Discord actions can be intercepted before execution or that deleted Discord state can always be perfectly resurrected.
 
 ## 2. Security hierarchy
 
@@ -25,12 +25,12 @@ The security model is intentionally layered:
 - AI must never authorize arbitrary Discord mutations.
 - Security enforcement must remain operational when Groq is unavailable.
 - Non-owner manageable roles should not receive `ADMINISTRATOR` or other protected destructive permissions by default.
-- APXOR must never rewrite `@everyone`, managed/integration roles, roles above its hierarchy position, or the guild owner.
-- Operator capabilities are APXOR capabilities, not a reason to grant broad Discord permissions.
+- APEXOR must never rewrite `@everyone`, managed/integration roles, roles above its hierarchy position, or the guild owner.
+- Operator capabilities are APEXOR capabilities, not a reason to grant broad Discord permissions.
 - Security actions must be idempotent.
 - Gateway signals and REST reconciliation must tolerate duplicate, missing, delayed and eventually-consistent events.
 - Recovery means state reconstruction, not resurrection of deleted Discord IDs or message history.
-- Protection status must represent actual system health; APXOR must not claim 100% protection.
+- Protection status must represent actual system health; APEXOR must not claim 100% protection.
 
 ## 4. Protected permission policy
 
@@ -44,7 +44,7 @@ The default critical policy treats these as protected on manageable non-owner ro
 
 `ADMINISTRATOR` is emergency severity because it bypasses channel permission overwrites and grants broad authority.
 
-Permission enforcement is conservative: it must respect Discord role hierarchy and managed-role constraints. The owner remains the ultimate Discord authority and cannot be controlled by APXOR.
+Permission enforcement is conservative: it must respect Discord role hierarchy and managed-role constraints. The owner remains the ultimate Discord authority and cannot be controlled by APEXOR.
 
 ## 5. Detection signals
 
@@ -58,7 +58,7 @@ Primary resource and security signals include:
 - Webhook changes.
 - Integration/bot changes.
 - Privilege changes and permission diffs.
-- APXOR protected-resource modifications.
+- APEXOR protected-resource modifications.
 
 The event layer normalizes these into a stable internal security-event representation.
 
@@ -131,7 +131,7 @@ Snapshots should cover recoverable Discord state such as:
 - Role memberships where supported.
 - Webhook metadata where supported.
 
-Recovery is priority-aware, dependency-aware, idempotent and rate-limit-aware. Protected APXOR resources have higher priority. Multi-resource recovery remains open until the complete expected target set is verified; one successful restoration must not prematurely resolve an incident.
+Recovery is priority-aware, dependency-aware, idempotent and rate-limit-aware. Protected APEXOR resources have higher priority. Multi-resource recovery remains open until the complete expected target set is verified; one successful restoration must not prematurely resolve an incident.
 
 ## 11. Availability and failure isolation
 
@@ -154,7 +154,7 @@ Any future dashboard mutation endpoint must enforce server-side authorization an
 
 ## 13. Production-readiness gates
 
-APXOR is not production-ready until the following are verified:
+APEXOR is not production-ready until the following are verified:
 
 - Full Discord integration tests.
 - Gateway reconnect and duplicate/missing event tests.

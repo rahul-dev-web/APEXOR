@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class RecoveryEngine:
-    """Reconstruct recoverable Discord state from APXOR snapshots.
+    """Reconstruct recoverable Discord state from APEXOR snapshots.
 
     Recovery creates new Discord resources; it cannot resurrect deleted IDs or
     message history. Dependency reconstruction keeps a mapping from original
@@ -40,7 +40,7 @@ class RecoveryEngine:
         *,
         resource_type: str,
         resource_id: int,
-        reason: str = "APXOR security recovery",
+        reason: str = "APEXOR security recovery",
     ) -> RecoveryAction:
         snapshot = await self.snapshots.latest_resource(
             session,
@@ -180,7 +180,7 @@ class RecoveryEngine:
             if not isinstance(restored, discord.Role):
                 return "restored object is not a Discord role"
             if restored.managed:
-                return "managed Discord roles cannot be reconstructed by APXOR"
+                return "managed Discord roles cannot be reconstructed by APEXOR"
             expected_permissions = int(snapshot.get("permissions", 0))
             if restored.permissions.value != expected_permissions:
                 return f"permission mismatch: expected={expected_permissions} actual={restored.permissions.value}"
@@ -236,7 +236,7 @@ class RecoveryEngine:
             if role in member.roles:
                 continue
             try:
-                await member.add_roles(role, reason="APXOR role membership recovery")
+                await member.add_roles(role, reason="APEXOR role membership recovery")
             except discord.NotFound:
                 continue
             except (discord.Forbidden, discord.HTTPException) as exc:
@@ -311,7 +311,7 @@ class RecoveryEngine:
                 return existing_mapped
 
         if bool(data.get("managed", False)):
-            raise ValueError("Managed Discord roles cannot be recreated by APXOR")
+            raise ValueError("Managed Discord roles cannot be recreated by APEXOR")
 
         existing = discord.utils.get(guild.roles, name=data["name"])
         if existing is not None and not existing.is_default() and not existing.managed:
@@ -325,14 +325,14 @@ class RecoveryEngine:
             colour=discord.Colour(data.get("colour", 0)),
             hoist=bool(data.get("hoist", False)),
             mentionable=bool(data.get("mentionable", False)),
-            reason="APXOR snapshot recovery",
+            reason="APEXOR snapshot recovery",
         )
         if original_id:
             restored_ids[original_id] = role.id
         position = max(1, int(data.get("position", 1)))
         try:
             await guild.edit_role_positions(
-                positions={role: position}, reason="APXOR snapshot recovery"
+                positions={role: position}, reason="APEXOR snapshot recovery"
             )
         except discord.HTTPException:
             logger.warning(
@@ -370,7 +370,7 @@ class RecoveryEngine:
             if parent is not None and existing.category_id != getattr(parent, "id", None):
                 try:
                     await existing.edit(
-                        category=parent, reason="APXOR snapshot recovery"
+                        category=parent, reason="APEXOR snapshot recovery"
                     )
                 except discord.HTTPException:
                     logger.warning(
@@ -386,7 +386,7 @@ class RecoveryEngine:
             guild, data.get("overwrites", []), restored_ids
         )
         channel_type = int(data.get("type", discord.ChannelType.text.value))
-        reason = "APXOR snapshot recovery"
+        reason = "APEXOR snapshot recovery"
 
         if channel_type == discord.ChannelType.category.value:
             channel = await guild.create_category(

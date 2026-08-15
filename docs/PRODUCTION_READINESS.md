@@ -1,4 +1,4 @@
-# APXOR Production Readiness Checklist
+# APEXOR Production Readiness Checklist
 
 This document tracks the gap between the implemented security MVP and a production Discord deployment.
 
@@ -47,7 +47,7 @@ A successful preflight is necessary but not sufficient for production readiness.
 
 ## Render topology
 
-APXOR uses two processes:
+APEXOR uses two processes:
 
 - **Web service:** FastAPI dashboard/API and liveness/readiness endpoints.
 - **Background worker:** Discord Gateway client and security event runtime.
@@ -83,7 +83,7 @@ Minimum live scenarios:
 1. Unauthorized critical permission grant.
 2. Rapid channel deletion.
 3. Rapid role deletion.
-4. Protected APXOR resource modification.
+4. Protected APEXOR resource modification.
 5. Audit-log actor attribution.
 6. Duplicate gateway signal.
 7. Gateway reconnect during an incident.
@@ -107,6 +107,6 @@ Detect -> Attribute -> Score -> Contain -> Notify -> Recover -> Verify -> Persis
 
 ## Release rule
 
-Do not label APXOR `PROTECTED` in a production deployment until the required Discord permissions, role hierarchy, database, Gateway worker, snapshot health, notification path and reconciliation loop have all been verified.
+Do not label APEXOR `PROTECTED` in a production deployment until the required Discord permissions, role hierarchy, database, Gateway worker, snapshot health, notification path and reconciliation loop have all been verified.
 
-Do not claim 100% protection. APXOR protects according to Discord's permission and API constraints and reports degraded states when those guarantees are not available.
+Do not claim 100% protection. APEXOR protects according to Discord's permission and API constraints and reports degraded states when those guarantees are not available.

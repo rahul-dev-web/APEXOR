@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: apxor-api
+    name: apexor-api
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
@@ -32,7 +32,7 @@ services:
         sync: false
 
   - type: worker
-    name: apxor-worker
+    name: apexor-worker
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .

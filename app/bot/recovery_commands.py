@@ -31,7 +31,7 @@ async def _authorized(interaction: discord.Interaction, capability: Capability) 
         )
     if not allowed:
         await interaction.response.send_message(
-            f"Access denied. Required APXOR capability: `{capability.value}`.",
+            f"Access denied. Required APEXOR capability: `{capability.value}`.",
             ephemeral=True,
         )
     return allowed
@@ -41,7 +41,7 @@ class RecoveryGroup(app_commands.Group):
     """Explicit, capability-gated snapshot and recovery controls."""
 
     def __init__(self) -> None:
-        super().__init__(name="recovery", description="APXOR snapshot and recovery operations")
+        super().__init__(name="recovery", description="APEXOR snapshot and recovery operations")
         self.snapshots = SnapshotService()
         self.recovery = RecoveryEngine()
         self.lockdown = LockdownEngine()
@@ -88,10 +88,10 @@ class RecoveryGroup(app_commands.Group):
             )
 
         if guild is None:
-            await interaction.response.send_message("APXOR has not initialized this server yet.", ephemeral=True)
+            await interaction.response.send_message("APEXOR has not initialized this server yet.", ephemeral=True)
             return
 
-        embed = discord.Embed(title="APXOR Recovery", color=discord.Color.blurple())
+        embed = discord.Embed(title="APEXOR Recovery", color=discord.Color.blurple())
         embed.add_field(name="Protection state", value=guild.protection_state, inline=True)
         embed.add_field(name="Risk", value=f"{guild.protection_score}/100", inline=True)
         if latest is None:
@@ -173,7 +173,7 @@ class RecoveryGroup(app_commands.Group):
                 interaction.guild,
                 resource_type=selected_type,
                 resource_id=original_id,
-                reason=f"Manual APXOR recovery by {interaction.user.id}",
+                reason=f"Manual APEXOR recovery by {interaction.user.id}",
             )
 
             if action.status == "VERIFIED":
@@ -221,6 +221,6 @@ class RecoveryGroup(app_commands.Group):
             for row in rows
         ]
         await interaction.response.send_message(
-            "**Latest APXOR snapshots**\n" + "\n".join(lines),
+            "**Latest APEXOR snapshots**\n" + "\n".join(lines),
             ephemeral=True,
         )

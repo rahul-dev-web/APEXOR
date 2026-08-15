@@ -7,7 +7,7 @@ from app.database.base import Base
 
 
 class AdminChange(Base):
-    """Durable audit record for APXOR control-plane mutations."""
+    """Durable audit record for APEXOR control-plane mutations."""
 
     __tablename__ = "admin_changes"
 

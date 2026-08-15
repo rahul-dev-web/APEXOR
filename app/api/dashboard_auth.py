@@ -12,10 +12,10 @@ from app.security.dashboard_auth import DashboardPrincipal, DashboardSessionSign
 
 router = APIRouter(prefix="/api/dashboard/auth", tags=["dashboard-auth"])
 
-SESSION_COOKIE = "apxor_dashboard_session"
-CSRF_COOKIE = "apxor_dashboard_csrf"
-STATE_COOKIE = "apxor_dashboard_oauth_state"
-CSRF_HEADER = "X-APXOR-CSRF-Token"
+SESSION_COOKIE = "apexor_dashboard_session"
+CSRF_COOKIE = "apexor_dashboard_csrf"
+STATE_COOKIE = "apexor_dashboard_oauth_state"
+CSRF_HEADER = "X-APEXOR-CSRF-Token"
 
 
 def _signer() -> DashboardSessionSigner:
@@ -61,17 +61,17 @@ def _allowed_guild_ids(guilds: list[dict]) -> set[int]:
 async def require_dashboard_guild_access(
     request: Request,
     guild_id: int,
-    x_apxor_dashboard_key: str | None = Header(default=None),
-    apxor_dashboard_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+    x_apexor_dashboard_key: str | None = Header(default=None),
+    apexor_dashboard_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> DashboardPrincipal | None:
     # Preserve the server-to-server API-key path for internal tooling and tests.
-    if settings.dashboard_api_key and x_apxor_dashboard_key and secrets.compare_digest(x_apxor_dashboard_key, settings.dashboard_api_key):
+    if settings.dashboard_api_key and x_apexor_dashboard_key and secrets.compare_digest(x_apexor_dashboard_key, settings.dashboard_api_key):
         return None
 
-    if not apxor_dashboard_session:
+    if not apexor_dashboard_session:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Dashboard login required.")
     try:
-        principal = _signer().verify(apxor_dashboard_session)
+        principal = _signer().verify(apexor_dashboard_session)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired dashboard session.") from exc
     if guild_id not in principal.guild_ids:
@@ -82,9 +82,9 @@ async def require_dashboard_guild_access(
 async def require_dashboard_mutation_access(
     request: Request,
     guild_id: int,
-    x_apxor_csrf_token: str | None = Header(default=None, alias=CSRF_HEADER),
-    apxor_dashboard_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
-    apxor_dashboard_csrf: str | None = Cookie(default=None, alias=CSRF_COOKIE),
+    x_apexor_csrf_token: str | None = Header(default=None, alias=CSRF_HEADER),
+    apexor_dashboard_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+    apexor_dashboard_csrf: str | None = Cookie(default=None, alias=CSRF_COOKIE),
 ) -> DashboardPrincipal:
     """Require a real browser session plus a session-bound CSRF token.
 
@@ -92,20 +92,20 @@ async def require_dashboard_mutation_access(
     key, because a server-to-server secret cannot establish which Discord
     operator initiated a privileged mutation.
     """
-    if not apxor_dashboard_session:
+    if not apexor_dashboard_session:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Dashboard login required.")
     try:
-        principal = _signer().verify(apxor_dashboard_session)
+        principal = _signer().verify(apexor_dashboard_session)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired dashboard session.") from exc
 
     if guild_id not in principal.guild_ids:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have dashboard access to this guild.")
-    if not x_apxor_csrf_token or not apxor_dashboard_csrf:
+    if not x_apexor_csrf_token or not apexor_dashboard_csrf:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF protection required for dashboard mutations.")
-    if not secrets.compare_digest(x_apxor_csrf_token, apxor_dashboard_csrf):
+    if not secrets.compare_digest(x_apexor_csrf_token, apexor_dashboard_csrf):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid dashboard CSRF token.")
-    if not _signer().verify_csrf_token(apxor_dashboard_session, x_apxor_csrf_token):
+    if not _signer().verify_csrf_token(apexor_dashboard_session, x_apexor_csrf_token):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid dashboard CSRF token.")
     return principal
 
@@ -177,23 +177,23 @@ async def callback(code: str, state: str, oauth_state: str | None = Cookie(defau
 @router.get("/me")
 async def me(
     response: Response,
-    x_apxor_dashboard_key: str | None = Header(default=None),
-    apxor_dashboard_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
-    apxor_dashboard_csrf: str | None = Cookie(default=None, alias=CSRF_COOKIE),
+    x_apexor_dashboard_key: str | None = Header(default=None),
+    apexor_dashboard_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+    apexor_dashboard_csrf: str | None = Cookie(default=None, alias=CSRF_COOKIE),
 ) -> dict:
-    if settings.dashboard_api_key and x_apxor_dashboard_key and secrets.compare_digest(x_apxor_dashboard_key, settings.dashboard_api_key):
+    if settings.dashboard_api_key and x_apexor_dashboard_key and secrets.compare_digest(x_apexor_dashboard_key, settings.dashboard_api_key):
         return {"authenticated": True, "mode": "service"}
-    if not apxor_dashboard_session:
+    if not apexor_dashboard_session:
         raise HTTPException(status_code=401, detail="Dashboard login required.")
     try:
-        principal = _signer().verify(apxor_dashboard_session)
+        principal = _signer().verify(apexor_dashboard_session)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired dashboard session.") from exc
 
-    csrf_token = apxor_dashboard_csrf
+    csrf_token = apexor_dashboard_csrf
     signer = _signer()
-    if not csrf_token or not signer.verify_csrf_token(apxor_dashboard_session, csrf_token):
-        csrf_token = signer.issue_csrf_token(apxor_dashboard_session)
+    if not csrf_token or not signer.verify_csrf_token(apexor_dashboard_session, csrf_token):
+        csrf_token = signer.issue_csrf_token(apexor_dashboard_session)
         response.set_cookie(CSRF_COOKIE, csrf_token, max_age=settings.dashboard_session_ttl_seconds, httponly=False, secure=_cookie_secure(), samesite=_csrf_cookie_samesite(), path="/")
 
     return {

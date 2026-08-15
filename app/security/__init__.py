@@ -1,1 +1,1 @@
-"""APXOR deterministic security core."""
+"""APEXOR deterministic security core."""

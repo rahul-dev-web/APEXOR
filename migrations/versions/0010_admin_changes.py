@@ -1,4 +1,4 @@
-"""Add durable audit records for APXOR control-plane mutations.
+"""Add durable audit records for APEXOR control-plane mutations.
 
 Revision ID: 0010_admin_changes
 Revises: 0009_recovery_batch_progress

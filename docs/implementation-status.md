@@ -1,4 +1,4 @@
-# APXOR Implementation Status
+# APEXOR Implementation Status
 
 > Updated after commit `2a08c52948e972bcdfeb4e29914f266877d5fc65`.
 
@@ -6,7 +6,7 @@
 
 **Backend security MVP: ~97% of the planned architecture implemented.**
 
-This percentage measures implementation coverage of the agreed backend/security architecture. It is **not** a production-readiness percentage and does not mean APXOR can guarantee prevention of every Discord-level destructive action.
+This percentage measures implementation coverage of the agreed backend/security architecture. It is **not** a production-readiness percentage and does not mean APEXOR can guarantee prevention of every Discord-level destructive action.
 
 ## Completed
 
@@ -17,7 +17,7 @@ This percentage measures implementation coverage of the agreed backend/security 
 - Alembic migration baseline
 - Guild/security configuration persistence
 - Idempotent guild auto-setup
-- APXOR security resources and protected-resource tracking
+- APEXOR security resources and protected-resource tracking
 - Permission auditing and configurable critical-permission enforcement
 - Owner-aware, guild-scoped capability authorization with expiry support
 - Authorized channel, role, and moderation command foundations
@@ -71,7 +71,7 @@ This percentage measures implementation coverage of the agreed backend/security 
 - Deterministic policy is the root of trust; AI is advisory only.
 - No AI output can directly execute a Discord mutation.
 - Owner authority is derived from the current Discord guild owner.
-- APXOR does not claim to intercept Discord REST requests before they execute.
+- APEXOR does not claim to intercept Discord REST requests before they execute.
 - Recovery reconstructs server state; deleted Discord IDs and message history are not resurrected.
 - If Groq is unavailable, deterministic detection, containment, notifications, and recovery continue.
 - If a recovery batch has any failed target, the incident remains open and the protection state does not falsely return to `PROTECTED`.

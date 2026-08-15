@@ -8,7 +8,7 @@ from discord.ext import tasks
 from sqlalchemy import select
 
 from app.ai.threat_analyst import ThreatAnalyst
-from app.bot.commands import APXORCommandTree
+from app.bot.commands import APEXORCommandTree
 from app.bot.recovery_commands import RecoveryGroup
 from app.core.config import settings
 from app.core.constants import ProtectionState, SecurityEventType
@@ -32,8 +32,8 @@ from app.security.snapshots import SnapshotService
 logger = logging.getLogger(__name__)
 
 
-class APXORClient(discord.Client):
-    """Discord Gateway client for APXOR's deterministic security core."""
+class APEXORClient(discord.Client):
+    """Discord Gateway client for APEXOR's deterministic security core."""
 
     PERMISSION_RECONCILIATION_MINUTES = 5
 
@@ -42,7 +42,7 @@ class APXORClient(discord.Client):
         intents.guilds = True
         intents.moderation = True
         super().__init__(intents=intents)
-        self.tree = APXORCommandTree(self)
+        self.tree = APEXORCommandTree(self)
         self.tree.add_command(RecoveryGroup())
         self._commands_synced = False
         self.permission_audit = PermissionAudit()
@@ -63,7 +63,7 @@ class APXORClient(discord.Client):
         await self.recovery_orchestrator.start()
         if not self.permission_reconciliation.is_running():
             self.permission_reconciliation.start()
-        logger.info("APXOR Discord client setup initialized; recovery worker and permission reconciliation online")
+        logger.info("APEXOR Discord client setup initialized; recovery worker and permission reconciliation online")
 
     async def close(self) -> None:
         if self.permission_reconciliation.is_running():
@@ -85,26 +85,26 @@ class APXORClient(discord.Client):
         await self.wait_until_ready()
 
     async def on_ready(self) -> None:
-        logger.info("APXOR connected as %s (%s)", self.user, self.user.id if self.user else "unknown")
+        logger.info("APEXOR connected as %s (%s)", self.user, self.user.id if self.user else "unknown")
         logger.info("Connected guilds: %d", len(self.guilds))
         if not self._commands_synced:
             for guild in self.guilds:
                 try:
                     await self.tree.sync(guild=guild)
-                    logger.info("Synced APXOR commands to guild=%s", guild.id)
+                    logger.info("Synced APEXOR commands to guild=%s", guild.id)
                 except discord.HTTPException:
-                    logger.exception("Failed to sync APXOR commands to guild=%s", guild.id)
+                    logger.exception("Failed to sync APEXOR commands to guild=%s", guild.id)
             self._commands_synced = True
         for guild in self.guilds:
             await self._run_auto_setup(guild)
             await self._audit_and_enforce_permissions(guild)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
-        logger.info("APXOR joined guild %s (%s)", guild.name, guild.id)
+        logger.info("APEXOR joined guild %s (%s)", guild.name, guild.id)
         try:
             await self.tree.sync(guild=guild)
         except discord.HTTPException:
-            logger.exception("Failed to sync APXOR commands to joined guild=%s", guild.id)
+            logger.exception("Failed to sync APEXOR commands to joined guild=%s", guild.id)
         await self._run_auto_setup(guild)
         await self._audit_and_enforce_permissions(guild)
 
@@ -238,14 +238,14 @@ class APXORClient(discord.Client):
                 return
 
             if changed_role is not None and not reconciliation:
-                action = await self.permission_enforcement.enforce_role(guild, changed_role, reason="APXOR automatic permission enforcement after role update")
+                action = await self.permission_enforcement.enforce_role(guild, changed_role, reason="APEXOR automatic permission enforcement after role update")
                 if action.status == "ENFORCED":
                     logger.critical("Permission enforcement: guild=%s role=%s removed=%s", guild.id, action.role_id, ",".join(action.removed_permissions))
                 elif action.status == "FAILED":
                     logger.error("Permission enforcement failed: guild=%s role=%s reason=%s", guild.id, action.role_id, action.reason)
                 return
 
-            actions = await self.permission_enforcement.enforce_guild(guild, reason="APXOR permission posture reconciliation")
+            actions = await self.permission_enforcement.enforce_guild(guild, reason="APEXOR permission posture reconciliation")
             enforced = [a for a in actions if a.status == "ENFORCED"]
             failed = [a for a in actions if a.status == "FAILED"]
             if enforced or failed:
@@ -412,7 +412,7 @@ class APXORClient(discord.Client):
                     event_log_id=persisted_event_id,
                 )
                 logger.critical(
-                    "APXOR LOCKDOWN: guild=%s actor=%s risk=%d actions=%s",
+                    "APEXOR LOCKDOWN: guild=%s actor=%s risk=%d actions=%s",
                     event.guild_id,
                     event.actor_id,
                     decision.risk_score,

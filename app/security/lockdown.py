@@ -203,11 +203,11 @@ class LockdownEngine:
     ) -> str:
         """Enter emergency containment and report whether actor containment succeeded.
 
-        Discord cannot let APXOR intercept another application's REST request.
+        Discord cannot let APEXOR intercept another application's REST request.
         This method therefore treats the persisted LOCKDOWN state as a control
         state, while separately reporting whether the suspected actor's
         critical permissions were actually removed. An owner or a role above
-        APXOR is explicitly reported as partial containment rather than falsely
+        APEXOR is explicitly reported as partial containment rather than falsely
         claiming the threat was neutralized.
         """
         db_guild = await session.scalar(
@@ -262,7 +262,7 @@ class LockdownEngine:
                     try:
                         await role.edit(
                             permissions=updated,
-                            reason="APXOR emergency lockdown: remove critical permissions",
+                            reason="APEXOR emergency lockdown: remove critical permissions",
                         )
                         actions.append(
                             f"role:{role.id}:removed={','.join(sorted(critical))}"
