@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, Bot, Database, LockKeyhole, RefreshCw, ShieldCheck, Siren, Sparkles, Undo2 } from 'lucide-react'
+import { Activity, AlertTriangle, Bot, Database, LockKeyhole, RefreshCw, ShieldCheck, Siren, Sparkles, Undo2, Users } from 'lucide-react'
 
 const API_BASE = import.meta.env.VITE_APXOR_API_URL || ''
 
 const NAV = [
   ['overview', 'Overview'],
   ['security', 'Security Center'],
+  ['capabilities', 'Operators'],
   ['incidents', 'Incidents'],
   ['events', 'Events'],
   ['recovery', 'Recovery'],
@@ -13,8 +14,19 @@ const NAV = [
   ['ai', 'AI Security'],
 ]
 
-function api(path) {
-  return fetch(`${API_BASE}${path}`, { credentials: 'include', headers: { Accept: 'application/json' } })
+const CAPABILITIES = [
+  'SECURITY_VIEW', 'SECURITY_MANAGE', 'LOG_VIEW', 'INCIDENT_VIEW', 'INCIDENT_MANAGE',
+  'SNAPSHOT_VIEW', 'SNAPSHOT_CREATE', 'RECOVERY_MANAGE', 'CONFIG_VIEW', 'CONFIG_MANAGE',
+  'AI_USE', 'AI_MANAGE', 'CHANNEL_VIEW', 'CHANNEL_CREATE', 'CHANNEL_EDIT', 'CHANNEL_DELETE',
+  'ROLE_VIEW', 'ROLE_CREATE', 'ROLE_EDIT', 'ROLE_DELETE', 'MOD_KICK', 'MOD_BAN', 'MOD_TIMEOUT',
+]
+
+function api(path, options = {}) {
+  return fetch(`${API_BASE}${path}`, {
+    credentials: 'include',
+    ...options,
+    headers: { Accept: 'application/json', ...(options.headers || {}) },
+  })
 }
 
 function Login({ configured }) {
@@ -38,7 +50,7 @@ function Stat({ icon: Icon, label, value, tone = '' }) {
 
 function StateBadge({ state }) {
   const normalized = String(state || 'UNKNOWN').toUpperCase()
-  return <span className={`badge ${normalized === 'PROTECTED' ? 'good' : normalized === 'LOCKDOWN' || normalized === 'EMERGENCY' ? 'danger' : 'warn'}`}>{normalized}</span>
+  return <span className={`badge ${normalized === 'PROTECTED' || normalized === 'VERIFIED' || normalized === 'ENABLED' ? 'good' : normalized === 'LOCKDOWN' || normalized === 'EMERGENCY' || normalized === 'CRITICAL' ? 'danger' : 'warn'}`}>{normalized}</span>
 }
 
 export default function App() {
@@ -49,6 +61,10 @@ export default function App() {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [operatorUserId, setOperatorUserId] = useState('')
+  const [operatorCapability, setOperatorCapability] = useState('SECURITY_VIEW')
+  const [operatorExpiry, setOperatorExpiry] = useState('')
+  const [mutationLoading, setMutationLoading] = useState(false)
 
   const loadSession = async () => {
     const response = await api('/api/dashboard/auth/me')
@@ -62,6 +78,7 @@ export default function App() {
     const endpoints = {
       overview: `/api/dashboard/guilds/${selectedGuild}/overview`,
       security: `/api/dashboard/guilds/${selectedGuild}/security`,
+      capabilities: `/api/dashboard/guilds/${selectedGuild}/capabilities`,
       incidents: `/api/dashboard/guilds/${selectedGuild}/incidents`,
       events: `/api/dashboard/guilds/${selectedGuild}/events`,
       recovery: `/api/dashboard/guilds/${selectedGuild}/recovery`,
@@ -87,6 +104,35 @@ export default function App() {
   useEffect(() => { if (guildId) load(guildId, view) }, [guildId, view])
 
   const logout = async () => { await api('/api/dashboard/auth/logout', { method: 'POST' }); setSession(false) }
+
+  const mutateCapability = async (path, payload) => {
+    if (!session?.csrf_token) throw new Error('CSRF session token is unavailable. Refresh the dashboard.')
+    setMutationLoading(true); setError('')
+    try {
+      const response = await api(`/api/dashboard/guilds/${guildId}/capabilities/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-APXOR-CSRF-Token': session.csrf_token },
+        body: JSON.stringify(payload),
+      })
+      if (!response.ok) throw new Error((await response.text()) || `Mutation failed: ${response.status}`)
+      await load(guildId, 'capabilities')
+      return true
+    } catch (err) {
+      setError(err.message)
+      return false
+    } finally { setMutationLoading(false) }
+  }
+
+  const grantCapability = async (event) => {
+    event.preventDefault()
+    if (!operatorUserId.trim()) return setError('Enter a Discord user ID.')
+    const expires_at = operatorExpiry ? new Date(operatorExpiry).toISOString() : null
+    const ok = await mutateCapability('grant', { discord_user_id: Number(operatorUserId), capability: operatorCapability, expires_at })
+    if (ok) { setOperatorUserId(''); setOperatorExpiry('') }
+  }
+
+  const revokeCapability = (row) => mutateCapability('revoke', { discord_user_id: row.discord_user_id, capability: row.capability, expires_at: null })
+
   const isOverview = view === 'overview'
   const protection = data?.protection || data?.security || {}
   const metrics = data?.security_metrics || {}
@@ -139,7 +185,23 @@ export default function App() {
 
         {!isOverview && view === 'security' && data && <section className="panel"><div className="panel-head"><h3>{data.name}</h3><StateBadge state={data.protection_state} /></div><pre className="json-view">{JSON.stringify(data, null, 2)}</pre></section>}
 
-        {!isOverview && view !== 'security' && <section className="table-panel"><div className="panel-head"><h3>{NAV.find(([k]) => k === view)?.[1]}</h3><span className="muted">Latest {rows.length} records</span></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Severity / Status</th><th>Actor / Resource</th><th>Risk</th><th>Time</th></tr></thead><tbody>{rows.length ? rows.map((row) => <tr key={row.id}><td><b>{row.event_type || row.incident_type || row.resource_type || row.classification || 'Snapshot'}</b><small>{row.incident_key || row.reason || row.snapshot_key || row.model || ''}</small></td><td><StateBadge state={row.severity || row.status || row.classification} /></td><td>{row.actor_id || row.original_resource_id || row.resource_id || '—'}</td><td>{row.risk_score ?? row.confidence != null ? `${row.risk_score ?? Math.round(row.confidence * 100)}%` : '—'}</td><td>{row.created_at ? new Date(row.created_at).toLocaleString() : '—'}</td></tr>) : <tr><td colSpan="5" className="empty">No records yet.</td></tr>}</tbody></table></div></section>}
+        {!isOverview && view === 'capabilities' && <>
+          <section className="panel">
+            <div className="panel-head"><h3>Grant APXOR capability</h3><span className="badge good"><Users size={13} /> SECURITY MANAGE</span></div>
+            <form className="operator-form" onSubmit={grantCapability}>
+              <label>Discord user ID<input value={operatorUserId} onChange={(e) => setOperatorUserId(e.target.value)} placeholder="123456789012345678" inputMode="numeric" /></label>
+              <label>Capability<select value={operatorCapability} onChange={(e) => setOperatorCapability(e.target.value)}>{CAPABILITIES.map((capability) => <option key={capability} value={capability}>{capability}</option>)}</select></label>
+              <label>Expiry (optional)<input type="datetime-local" value={operatorExpiry} onChange={(e) => setOperatorExpiry(e.target.value)} /></label>
+              <button className="primary-button" type="submit" disabled={mutationLoading}>Grant capability</button>
+            </form>
+          </section>
+          <section className="table-panel">
+            <div className="panel-head"><h3>Capability grants</h3><span className="muted">Latest {rows.length} records</span></div>
+            <div className="table-wrap"><table><thead><tr><th>User</th><th>Capability</th><th>Status</th><th>Granted by</th><th>Expiry</th><th /></tr></thead><tbody>{rows.length ? rows.map((row) => <tr key={row.id}><td><b>{row.discord_user_id}</b></td><td>{row.capability}</td><td><StateBadge state={row.enabled ? 'ENABLED' : 'DISABLED'} /></td><td>{row.granted_by_discord_id}</td><td>{row.expires_at ? new Date(row.expires_at).toLocaleString() : 'Never'}</td><td><button className="danger-button" disabled={!row.enabled || mutationLoading} onClick={() => revokeCapability(row)}>Revoke</button></td></tr>) : <tr><td colSpan="6" className="empty">No capability grants yet.</td></tr>}</tbody></table></div>
+          </section>
+        </>}
+
+        {!isOverview && view !== 'security' && view !== 'capabilities' && <section className="table-panel"><div className="panel-head"><h3>{NAV.find(([k]) => k === view)?.[1]}</h3><span className="muted">Latest {rows.length} records</span></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Severity / Status</th><th>Actor / Resource</th><th>Risk</th><th>Time</th></tr></thead><tbody>{rows.length ? rows.map((row) => <tr key={row.id}><td><b>{row.event_type || row.incident_type || row.resource_type || row.classification || 'Snapshot'}</b><small>{row.incident_key || row.reason || row.snapshot_key || row.model || ''}</small></td><td><StateBadge state={row.severity || row.status || row.classification} /></td><td>{row.actor_id || row.original_resource_id || row.resource_id || '—'}</td><td>{row.risk_score != null ? row.risk_score : row.confidence != null ? `${Math.round(row.confidence * 100)}%` : '—'}</td><td>{row.created_at ? new Date(row.created_at).toLocaleString() : '—'}</td></tr>) : <tr><td colSpan="5" className="empty">No records yet.</td></tr>}</tbody></table></div></section>}
       </main>
     </div>
   )
