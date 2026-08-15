@@ -20,7 +20,25 @@ from app.models import (
 )  # noqa: F401
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
+
+
+def _normalize_database_url(url: str) -> str:
+    """Use SQLAlchemy's async psycopg dialect for Alembic migrations.
+
+    The application normalizes plain PostgreSQL URLs in ``app.database.session``.
+    Alembic has its own engine construction path, so it must perform the same
+    normalization or ``postgresql://`` would select a synchronous driver and
+    fail when ``async_engine_from_config`` opens the migration connection.
+    """
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url.removeprefix("postgresql://")
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url.removeprefix("postgres://")
+    return url
+
+
+database_url = _normalize_database_url(settings.database_url)
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -30,7 +48,7 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.database_url,
+        url=database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
