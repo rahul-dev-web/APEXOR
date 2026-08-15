@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="APXOR API",
-    version="0.3.2",
+    version="0.3.3",
     description="Security-first Discord anti-nuke platform API.",
 )
 
@@ -28,7 +28,7 @@ app.add_middleware(
     allow_origins=[settings.dashboard_frontend_url.rstrip("/")],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Accept", "Content-Type", "X-APXOR-Dashboard-Key"],
+    allow_headers=["Accept", "Content-Type", "X-APXOR-Dashboard-Key", "X-APXOR-CSRF-Token"],
 )
 
 app.include_router(dashboard_router)
