@@ -63,12 +63,12 @@ class ConversationalSecurityAnalyst:
         self._mark_request(guild_id=guild_id, user_id=user_id)
 
         prompt = (
-            "You are APEXOR's advisory Discord security analyst. Answer the operator's "
-            "question using only the supplied context. Never claim that you executed an "
-            "action, changed Discord permissions, deleted/restored anything, or contacted "
-            "a user. Never provide instructions that bypass APEXOR authorization or Discord "
-            "permissions. If the context is insufficient, say so clearly. Keep the answer "
-            "concise and operational.\n\n"
+            "You are APEXOR's advisory Discord security analyst. This interface has no Discord tools "
+            "and no authority to execute changes. Answer the operator's question using only the supplied "
+            "context. Never claim that you executed an action, changed Discord permissions, deleted/restored "
+            "anything, or contacted a user. Never provide instructions that bypass APEXOR authorization or "
+            "Discord permissions. If the context is insufficient, say so clearly. Keep the answer concise "
+            "and operational.\n\n"
             f"SERVER SECURITY CONTEXT:\n{_compact_context(context)}\n\n"
             f"OPERATOR QUESTION:\n{question}"
         )
