@@ -6,6 +6,7 @@ import discord
 from discord import app_commands
 from sqlalchemy import desc, select
 
+from app.ai.conversation import ConversationalSecurityAnalyst
 from app.ai.threat_analyst import ThreatAnalyst
 from app.core.config import settings
 from app.core.constants import Capability
@@ -318,6 +319,7 @@ class AIGroup(app_commands.Group):
     def __init__(self) -> None:
         super().__init__(name="ai", description="Inspect APXOR advisory AI security analysis")
         self._analyst = ThreatAnalyst()
+        self._conversation = ConversationalSecurityAnalyst()
 
     @app_commands.command(name="status", description="Show APXOR AI availability and latest analysis")
     async def status(self, interaction: discord.Interaction) -> None:
@@ -379,6 +381,74 @@ class AIGroup(app_commands.Group):
             embed.add_field(name="AI recommendation", value=latest_ai.recommended_action, inline=True)
             embed.add_field(name="AI reason", value=latest_ai.reason[:1024], inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="ask", description="Ask the advisory APXOR security analyst a question")
+    @app_commands.describe(question="Security question about the current server posture or latest incident")
+    async def ask(self, interaction: discord.Interaction, question: app_commands.Range[str, 1, 1000]) -> None:
+        if not await _authorized(interaction, Capability.AI_USE):
+            return
+        if interaction.guild is None or SessionLocal is None:
+            await interaction.response.send_message("Database is unavailable.", ephemeral=True)
+            return
+        if not self._conversation.enabled:
+            await interaction.response.send_message("APXOR AI is currently unavailable. Configure GROQ_API_KEY and GROQ_MODEL.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        async with SessionLocal() as session:
+            guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == interaction.guild.id))
+            incident = await session.scalar(
+                select(SecurityIncident)
+                .where(SecurityIncident.guild_id == interaction.guild.id)
+                .order_by(desc(SecurityIncident.created_at))
+            )
+            latest_ai = await session.scalar(
+                select(AIThreatAssessment)
+                .where(AIThreatAssessment.guild_id == interaction.guild.id)
+                .order_by(desc(AIThreatAssessment.created_at))
+            )
+
+        if guild is None:
+            await interaction.followup.send("APXOR has not initialized this server yet.", ephemeral=True)
+            return
+
+        context = {
+            "protection_state": guild.protection_state,
+            "protection_score": guild.protection_score,
+            "latest_incident": None if incident is None else {
+                "key": incident.incident_key,
+                "type": incident.incident_type,
+                "severity": incident.severity,
+                "risk_score": incident.risk_score,
+                "status": incident.status,
+                "event_count": incident.event_count,
+                "summary": incident.summary[:1000],
+            },
+            "latest_ai_assessment": None if latest_ai is None else {
+                "classification": latest_ai.classification,
+                "confidence": latest_ai.confidence,
+                "recommendation": latest_ai.recommended_action,
+                "reason": latest_ai.reason[:1000],
+            },
+        }
+
+        try:
+            answer = await self._conversation.ask(
+                guild_id=interaction.guild.id,
+                user_id=interaction.user.id,
+                question=question,
+                context=context,
+            )
+        except RuntimeError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        except Exception:
+            await interaction.followup.send("APXOR AI could not complete the request. Deterministic security controls are unaffected.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title="APXOR AI Analyst", description=answer, color=discord.Color.blurple())
+        embed.set_footer(text="Advisory only • APXOR deterministic security policy remains authoritative")
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 class APXORCommandTree(app_commands.CommandTree):
