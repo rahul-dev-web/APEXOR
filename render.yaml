@@ -2,11 +2,10 @@ services:
   - type: web
     name: apexor-api
     runtime: docker
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./Dockerfile.web
     dockerContext: .
     healthCheckPath: /health/ready
     autoDeploy: true
-    startCommand: sh -c "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     envVars:
       - key: APP_ENV
         value: production
@@ -34,10 +33,9 @@ services:
   - type: worker
     name: apexor-worker
     runtime: docker
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./Dockerfile.worker
     dockerContext: .
     autoDeploy: true
-    startCommand: python -m scripts.worker_entrypoint
     envVars:
       - key: APP_ENV
         value: production
