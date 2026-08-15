@@ -1,3 +1,4 @@
+from app.models.admin_changes import AdminChange
 from app.models.ai import AIThreatAssessment
 from app.models.capabilities import UserCapability
 from app.models.events import SecurityEventLog, SecurityIncident
@@ -17,4 +18,5 @@ __all__ = [
     "SecuritySnapshot",
     "RecoveryAction",
     "AIThreatAssessment",
+    "AdminChange",
 ]
