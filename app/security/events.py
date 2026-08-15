@@ -144,14 +144,12 @@ class EventCorrelator:
 
     @staticmethod
     def _mixed_attack_bonus(count: int, distinct_types: int) -> int:
-        """Escalate mixed destructive behavior, not repeated copies of one action."""
-        if distinct_types < 2:
-            return 0
+        """Add a bounded destructive-window escalation on top of action velocity."""
         if count >= 10:
             return 30
         if count >= 5:
-            return 20
-        if count >= 3:
+            return 10
+        if distinct_types >= 2 and count >= 3:
             return 10
         return 0
 
