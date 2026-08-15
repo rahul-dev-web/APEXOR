@@ -1,6 +1,11 @@
-from types import SimpleNamespace
+from dataclasses import dataclass
 
 from app.security.recovery import RecoveryEngine
+
+
+@dataclass(frozen=True)
+class FakeTarget:
+    id: int
 
 
 class FakeGuild:
@@ -16,7 +21,7 @@ class FakeGuild:
 
 
 def test_resolve_overwrites_uses_recreated_role_id():
-    recreated_role = SimpleNamespace(id=9002)
+    recreated_role = FakeTarget(id=9002)
     guild = FakeGuild(roles={9002: recreated_role})
 
     overwrites = RecoveryEngine._resolve_overwrites(
