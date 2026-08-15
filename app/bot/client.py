@@ -6,6 +6,7 @@ import logging
 import discord
 from discord.ext import tasks
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.ai.threat_analyst import ThreatAnalyst
 from app.bot.commands import APEXORCommandTree
@@ -204,8 +205,33 @@ class APEXORClient(discord.Client):
             async with SessionLocal() as session:
                 await self.snapshots.capture_resource(session, resource, resource_type=resource_type, source=source)
                 await session.commit()
+        except IntegrityError as e:
+            # Race condition: multiple concurrent event handlers attempting to capture the same version.
+            # Since snapshots are immutable and versioned, duplicate captures are benign and can be ignored.
+            if "uq_security_snapshots_version" in str(e):
+                logger.debug(
+                    "Snapshot version already captured (race condition): guild=%s resource=%s/%s source=%s",
+                    getattr(getattr(resource, "guild", resource), "id", "unknown"),
+                    resource_type,
+                    getattr(resource, "id", "unknown"),
+                    source,
+                )
+            else:
+                logger.exception(
+                    "Snapshot capture integrity error: guild=%s resource=%s/%s source=%s",
+                    getattr(getattr(resource, "guild", resource), "id", "unknown"),
+                    resource_type,
+                    getattr(resource, "id", "unknown"),
+                    source,
+                )
         except Exception:
-            logger.exception("Snapshot capture failed: guild=%s resource=%s/%s source=%s", getattr(getattr(resource, "guild", resource), "id", "unknown"), resource_type, getattr(resource, "id", "unknown"), source)
+            logger.exception(
+                "Snapshot capture failed: guild=%s resource=%s/%s source=%s",
+                getattr(getattr(resource, "guild", resource), "id", "unknown"),
+                resource_type,
+                getattr(resource, "id", "unknown"),
+                source,
+            )
 
     async def _capture_after_if_safe(self, resource, resource_type: str, detection: Detection | None) -> None:
         if detection is None or detection.signal.score < 60:
@@ -277,7 +303,7 @@ class APEXORClient(discord.Client):
             return
         try:
             async with SessionLocal() as session:
-                await self.security_persistence.ensure_guild(session, guild.id, name=guild.name, owner_id=guild.owner_id)
+                await self.security_persistence.ensure_guild(session, guild.id, name=guild.name, owner_id=guild.owner_id or 0)
                 await session.commit()
         except Exception:
             logger.exception("Failed to persist guild state: guild=%s", guild.id)
@@ -360,7 +386,7 @@ class APEXORClient(discord.Client):
                 logger.debug("Duplicate security event suppressed: %s", event.fingerprint)
                 return None
 
-            await self.security_persistence.ensure_guild(session, event.guild_id, name=guild.name, owner_id=guild.owner_id)
+            await self.security_persistence.ensure_guild(session, event.guild_id, name=guild.name, owner_id=guild.owner_id or 0)
             persisted_event_id = await self.security_persistence.record(session, detection)
             logger.info("Security event: guild=%s type=%s actor=%s target=%s risk=%d velocity=%d/%ss reason=%s", event.guild_id, event.event_type.value, event.actor_id, event.target_id, detection.signal.score, detection.velocity_count, detection.velocity_window_seconds, detection.signal.reason)
 

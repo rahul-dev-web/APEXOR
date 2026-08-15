@@ -6,6 +6,7 @@ from typing import Any
 
 import discord
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.snapshots import SecuritySnapshot
@@ -61,6 +62,9 @@ class SnapshotService:
             source=source,
         )
         session.add(snapshot)
+        
+        # Note: IntegrityError on duplicate version will be handled by caller
+        # since multiple concurrent event handlers may attempt to capture the same version
         return snapshot
 
     async def latest_resource(

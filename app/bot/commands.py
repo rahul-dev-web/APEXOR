@@ -170,7 +170,7 @@ class ChannelGroup(app_commands.Group):
             kwargs["slowmode_delay"] = slowmode
         if nsfw is not None:
             kwargs["nsfw"] = nsfw
-        await channel.edit(**kwargs, reason=f"APEXOR authorized by {interaction.user.id}")
+        await channel.edit(**kwargs, reason=f"APEXOR authorized by {interaction.user.id}")  # type: ignore
         await interaction.response.send_message(f"Updated {channel.mention}.", ephemeral=True)
 
     @app_commands.command(name="delete", description="Delete a channel through APEXOR authorization")
@@ -213,6 +213,7 @@ class RoleGroup(app_commands.Group):
         if role.guild != interaction.guild:
             await interaction.response.send_message("That role is not in this server.", ephemeral=True)
             return
+        assert interaction.guild is not None
         bot_member = interaction.guild.me
         if bot_member is None or role >= bot_member.top_role or role.managed or role.is_default():
             await interaction.response.send_message("APEXOR cannot edit this role because of Discord hierarchy/managed-role constraints.", ephemeral=True)
@@ -230,7 +231,7 @@ class RoleGroup(app_commands.Group):
             kwargs["hoist"] = hoist
         if mentionable is not None:
             kwargs["mentionable"] = mentionable
-        await role.edit(**kwargs, reason=f"APEXOR authorized by {interaction.user.id}")
+        await role.edit(**kwargs, reason=f"APEXOR authorized by {interaction.user.id}")  # type: ignore
         await interaction.response.send_message(f"Updated role `{role.name}`.", ephemeral=True)
 
     @app_commands.command(name="delete", description="Delete a role through APEXOR authorization")
@@ -244,6 +245,7 @@ class RoleGroup(app_commands.Group):
         if role.guild != interaction.guild:
             await interaction.response.send_message("That role is not in this server.", ephemeral=True)
             return
+        assert interaction.guild is not None
         bot_member = interaction.guild.me
         if bot_member is None or role >= bot_member.top_role or role.managed or role.is_default():
             await interaction.response.send_message("APEXOR cannot delete this role because of Discord hierarchy/managed-role constraints.", ephemeral=True)
@@ -271,7 +273,7 @@ class ModerationGroup(app_commands.Group):
             await interaction.response.send_message("That member is not in this server.", ephemeral=True)
             return
         bot_member = interaction.guild.me
-        if bot_member is None or member >= bot_member:
+        if bot_member is None or member.top_role >= bot_member.top_role:
             await interaction.response.send_message("APEXOR cannot kick a member at or above its hierarchy.", ephemeral=True)
             return
         await member.kick(reason=reason or f"APEXOR authorized by {interaction.user.id}")
@@ -288,7 +290,7 @@ class ModerationGroup(app_commands.Group):
             await interaction.response.send_message("That member is not in this server.", ephemeral=True)
             return
         bot_member = interaction.guild.me
-        if bot_member is None or member >= bot_member:
+        if bot_member is None or member.top_role >= bot_member.top_role:
             await interaction.response.send_message("APEXOR cannot ban a member at or above its hierarchy.", ephemeral=True)
             return
         await member.ban(delete_message_days=delete_message_days, reason=reason or f"APEXOR authorized by {interaction.user.id}")
@@ -306,7 +308,7 @@ class ModerationGroup(app_commands.Group):
             await interaction.response.send_message("That member is not in this server.", ephemeral=True)
             return
         bot_member = interaction.guild.me
-        if bot_member is None or member >= bot_member:
+        if bot_member is None or member.top_role >= bot_member.top_role:
             await interaction.response.send_message("APEXOR cannot timeout a member at or above its hierarchy.", ephemeral=True)
             return
         await member.timeout(timedelta(minutes=duration_minutes), reason=reason or f"APEXOR authorized by {interaction.user.id}")
