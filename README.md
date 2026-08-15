@@ -4,7 +4,7 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~94% of the backend security MVP architecture is now implemented.**
+**Overall: ~95% of the backend security MVP architecture is now implemented.**
 
 This is an engineering progress estimate, not a claim that the bot is production-ready.
 
@@ -38,6 +38,7 @@ This is an engineering progress estimate, not a claim that the bot is production
 - Explicit protection state machine with recovery success/failure/degraded transitions
 - `ProtectionRuntime` wired into the Discord Gateway event path as the lifecycle policy boundary
 - Protected-resource containment correctly persists `LOCKDOWN` even when the raw risk band is lower
+- REST audit-log fallback now rejects stale entries when Discord exposes `created_at`, reducing incorrect actor attribution during eventually-consistent correlation
 - Security-core, permission, audit, AI, privilege-escalation, decision-kernel, protection-runtime and dashboard-auth unit tests
 - Docker image + GitHub Actions compile/test workflow
 
@@ -61,7 +62,7 @@ python -m venv .venv
 Windows PowerShell:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
+.\\.venv\\Scripts\\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
@@ -178,7 +179,7 @@ Detection does not depend on AI availability.
 
 ## Audit correlation
 
-APXOR consumes Discord's real-time audit-log Gateway signal when available and uses REST Audit Logs as a fallback for resource events. Audit IDs become stable fingerprints so duplicate Gateway/resource signals do not trigger duplicate security actions.
+APXOR consumes Discord's real-time audit-log Gateway signal when available and uses REST Audit Logs as a fallback for resource events. Audit IDs become stable fingerprints so duplicate Gateway/resource signals do not trigger duplicate security actions. REST fallback correlation also rejects stale entries when `created_at` is available, reducing false actor attribution from eventually-consistent audit-log reads.
 
 ## Incident and recovery model
 
@@ -215,7 +216,7 @@ The security pipeline launches AI analysis asynchronously after deterministic ev
 5. Permission Auditor — **implemented; policy expansion next**
 6. Capability Authorization — **implemented; command coverage expanding**
 7. Anti-Nuke Detection — **implemented; behavior hardening next**
-8. Audit Correlation — **real-time Gateway + REST fallback implemented; reconciliation hardening next**
+8. Audit Correlation — **real-time Gateway + REST fallback implemented; stale-entry hardening added; broader reconciliation next**
 9. Snapshots — **implemented; broader resource coverage next**
 10. Recovery — **dependency/rate-limit/priority MVP + durable batch lifecycle implemented; broader resource verification next**
 11. Lockdown — **deterministic state machine + Gateway runtime + batch-aware recovery lifecycle implemented**
