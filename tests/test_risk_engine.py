@@ -9,7 +9,7 @@ def test_protected_channel_delete_is_critical_baseline():
     assert "protected_target" in signal.reason
 
 
-def test_channel_delete_velocity_reaches_critical():
+def test_channel_delete_velocity_reaches_high_risk():
     correlator = EventCorrelator(window_seconds=10)
     detections = [
         correlator.process(
@@ -30,7 +30,7 @@ def test_channel_delete_velocity_reaches_critical():
     assert "destructive_window_5" in detections[-1].signal.reason
 
 
-def test_mixed_channel_and_role_deletions_share_actor_velocity():
+def test_mixed_channel_and_role_deletions_escalate_as_mixed_attack():
     correlator = EventCorrelator(window_seconds=10)
     events = [
         SecurityEvent(guild_id=1, actor_id=42, target_id=1, event_type=SecurityEventType.CHANNEL_DELETE, event_id="evt-1"),
@@ -42,7 +42,7 @@ def test_mixed_channel_and_role_deletions_share_actor_velocity():
 
     assert detections[-1].velocity_count == 1
     assert "destructive_window_3" in detections[-1].signal.reason
-    assert detections[-1].signal.score == 40
+    assert detections[-1].signal.score == 50
 
 
 def test_duplicate_event_is_suppressed():
