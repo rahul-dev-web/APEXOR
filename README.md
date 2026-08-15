@@ -6,9 +6,9 @@ APXOR is a security-first Discord anti-nuke platform.
 
 **Backend security MVP: ~96% implemented.**
 
-**Overall APXOR v1 engineering scope: ~83–87% implemented.**
+**Overall APXOR v1 engineering scope: ~84–88% implemented.**
 
-These are engineering progress estimates, not production-readiness claims. The deterministic security core, recovery lifecycle, AI advisory layer, dashboard API/authentication foundation, conversational AI surface, and operational health checks are substantially implemented. Live Discord integration/chaos verification, broader resource recovery, production observability and deployment verification remain.
+These are engineering progress estimates, not production-readiness claims. The deterministic security core, recovery lifecycle, AI advisory layer, dashboard API/authentication foundation, conversational AI surface, operational health checks, and dashboard capability-management security are substantially implemented. Live Discord integration/chaos verification, broader resource recovery, production observability and deployment verification remain.
 
 ### Implemented
 
@@ -47,6 +47,10 @@ These are engineering progress estimates, not production-readiness claims. The d
 - Safe dependency health snapshot exposing database, AI and dashboard-auth readiness without returning secret values
 - Authorized `/ai ask` conversational security analyst with bounded questions, server security context, cooldown protection and advisory-only execution
 - Conversational AI tests covering prompt safety, context filtering and request bounds
+- Session-bound CSRF protection for browser dashboard mutations
+- Dashboard capability grant/revoke mutations with server-side `SECURITY_MANAGE` authorization
+- Durable `admin_changes` control-plane audit trail for capability grants and revocations
+- Dashboard endpoint for reading the control-plane audit trail
 
 ### Remaining
 
@@ -57,7 +61,6 @@ These are engineering progress estimates, not production-readiness claims. The d
 - Reconciliation hardening for all eventually-consistent Discord audit/resource cases
 - Full live Discord integration and chaos test suite
 - Production observability, alerting and deployment verification
-- Dashboard write workflows with production-grade CSRF/mutation policy
 - Dashboard UX expansion beyond the current security overview/data views
 
 ## Local setup
@@ -135,17 +138,21 @@ GET  /api/dashboard/auth/callback
 GET  /api/dashboard/auth/me
 POST /api/dashboard/auth/logout
 
-GET /api/dashboard/health
-GET /api/dashboard/guilds/{guild_id}/overview
-GET /api/dashboard/guilds/{guild_id}/security
-GET /api/dashboard/guilds/{guild_id}/incidents
-GET /api/dashboard/guilds/{guild_id}/events
-GET /api/dashboard/guilds/{guild_id}/ai
-GET /api/dashboard/guilds/{guild_id}/recovery
-GET /api/dashboard/guilds/{guild_id}/snapshots
+GET  /api/dashboard/health
+GET  /api/dashboard/guilds/{guild_id}/overview
+GET  /api/dashboard/guilds/{guild_id}/security
+GET  /api/dashboard/guilds/{guild_id}/capabilities
+GET  /api/dashboard/guilds/{guild_id}/admin-changes
+POST /api/dashboard/guilds/{guild_id}/capabilities/grant
+POST /api/dashboard/guilds/{guild_id}/capabilities/revoke
+GET  /api/dashboard/guilds/{guild_id}/incidents
+GET  /api/dashboard/guilds/{guild_id}/events
+GET  /api/dashboard/guilds/{guild_id}/ai
+GET  /api/dashboard/guilds/{guild_id}/recovery
+GET  /api/dashboard/guilds/{guild_id}/snapshots
 ```
 
-Future dashboard mutation endpoints must add explicit CSRF/session mutation protection and server-side capability authorization before production use.
+All browser mutation endpoints require a real Discord OAuth session plus a session-bound CSRF token and server-side APXOR capability authorization. The internal service API key is intentionally rejected for mutations.
 
 ## Security architecture
 
@@ -209,6 +216,8 @@ Detection does not depend on AI availability.
 
 APXOR consumes Discord's real-time audit-log Gateway signal when available and uses REST Audit Logs as a fallback for resource events. Audit IDs become stable fingerprints so duplicate Gateway/resource signals do not trigger duplicate security actions. REST fallback correlation rejects stale entries when `created_at` is available, reducing incorrect actor attribution from eventually-consistent reads.
 
+APXOR also records control-plane mutations such as capability grants/revocations in `admin_changes`, giving dashboard operators a durable history of who changed APXOR authorization state and for whom.
+
 ## Incident and recovery model
 
 High-risk events are grouped into short-lived incidents by guild, actor and attack family. Incident severity escalates deterministically. Recovery uses known-good snapshots and reconstructs Discord state; it cannot resurrect deleted Discord IDs or message history.
@@ -248,7 +257,7 @@ Existing feature branches are not treated as parallel development lines. Before 
 3. Database — **implemented**
 4. Auto Setup — **implemented**
 5. Permission Auditor — **implemented; policy expansion next**
-6. Capability Authorization — **implemented; command coverage expanding**
+6. Capability Authorization — **implemented; dashboard grant/revoke + audit trail implemented**
 7. Anti-Nuke Detection — **implemented; behavior hardening next**
 8. Audit Correlation — **Gateway + REST fallback implemented; broader reconciliation next**
 9. Snapshots — **implemented; broader resource coverage next**
@@ -257,8 +266,8 @@ Existing feature branches are not treated as parallel development lines. Before 
 12. Incident Engine — **implemented**
 13. Groq Threat Analyst — **implemented as advisory runtime + persistence**
 14. `/ai` — **status + incident + conversational ask implemented; dedicated AI channel next**
-15. Dashboard API — **implemented**
-16. Dashboard authentication/frontend foundation — **implemented; UX and write workflows next**
+15. Dashboard API — **implemented; control-plane audit history added**
+16. Dashboard authentication/frontend foundation — **implemented; UX expansion next**
 17. Production/integration/chaos testing — **in progress; operational health hardening added**
 18. Production observability and deployment verification — **pending**
 
