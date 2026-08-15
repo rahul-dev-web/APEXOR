@@ -21,6 +21,10 @@ class RecoveryEngine:
     snapshot IDs to newly-created Discord IDs so recreated categories and roles
     can be referenced by subsequent channel/overwrite creation.
 
+    Role membership is restored as part of role recovery. Missing/deleted users
+    are ignored, while unexpected Discord/API failures are surfaced as a
+    verification failure rather than falsely marking the resource protected.
+
     Retryable Discord failures are deliberately re-raised after their durable
     recovery action is marked FAILED. RecoveryOrchestrator owns retry/backoff;
     swallowing those exceptions here would make its retry policy ineffective.
@@ -65,8 +69,12 @@ class RecoveryEngine:
         try:
             payload = self.snapshots.decode(snapshot)
             restored_ids: dict[int, int] = {}
+            membership_error: str | None = None
             if resource_type == "ROLE":
                 restored = await self._restore_role(guild, payload, restored_ids)
+                membership_error = await self._restore_role_members(
+                    guild, restored, payload.get("member_ids", [])
+                )
             elif resource_type == "CHANNEL":
                 await self._restore_channel_dependencies(
                     session, guild, payload, restored_ids
@@ -83,6 +91,9 @@ class RecoveryEngine:
                 snapshot=payload,
                 restored_ids=restored_ids,
             )
+            if verification_error is None:
+                verification_error = membership_error
+
             action.completed_at = datetime.now(timezone.utc)
             if verification_error is None:
                 action.status = "VERIFIED"
@@ -168,6 +179,8 @@ class RecoveryEngine:
         if resource_type == "ROLE":
             if not isinstance(restored, discord.Role):
                 return "restored object is not a Discord role"
+            if restored.managed:
+                return "managed Discord roles cannot be reconstructed by APXOR"
             expected_permissions = int(snapshot.get("permissions", 0))
             if restored.permissions.value != expected_permissions:
                 return f"permission mismatch: expected={expected_permissions} actual={restored.permissions.value}"
@@ -189,6 +202,48 @@ class RecoveryEngine:
             parent = getattr(restored, "category", None)
             if parent is None or getattr(parent, "name", None) != snapshot.get("parent_name"):
                 return f"parent mismatch: expected={expected_parent} actual={actual_parent}"
+        return None
+
+    async def _restore_role_members(
+        self,
+        guild: discord.Guild,
+        role: discord.Role,
+        member_ids: list[int] | list[str],
+    ) -> str | None:
+        """Reapply a role to every still-existing member from the snapshot.
+
+        A user that no longer exists in the guild is not a recovery failure.
+        API errors are failures because silently skipping them would make the
+        security dashboard report an incomplete reconstruction as verified.
+        """
+        if role.managed:
+            return "managed Discord roles cannot have membership restored"
+
+        failed: list[str] = []
+        expected_ids = {int(member_id) for member_id in member_ids}
+        for member_id in sorted(expected_ids):
+            member = guild.get_member(member_id)
+            if member is None:
+                try:
+                    member = await guild.fetch_member(member_id)
+                except discord.NotFound:
+                    # The account/member no longer exists in this guild.
+                    continue
+                except discord.HTTPException as exc:
+                    failed.append(f"{member_id}:{exc}")
+                    continue
+
+            if role in member.roles:
+                continue
+            try:
+                await member.add_roles(role, reason="APXOR role membership recovery")
+            except discord.NotFound:
+                continue
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                failed.append(f"{member_id}:{exc}")
+
+        if failed:
+            return f"role membership restoration failed for {len(failed)} member(s): " + "; ".join(failed[:5])
         return None
 
     async def _restore_channel_dependencies(
@@ -255,8 +310,11 @@ class RecoveryEngine:
             if existing_mapped is not None:
                 return existing_mapped
 
+        if bool(data.get("managed", False)):
+            raise ValueError("Managed Discord roles cannot be recreated by APXOR")
+
         existing = discord.utils.get(guild.roles, name=data["name"])
-        if existing is not None and not existing.is_default():
+        if existing is not None and not existing.is_default() and not existing.managed:
             if original_id:
                 restored_ids[original_id] = existing.id
             return existing
