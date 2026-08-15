@@ -6,7 +6,7 @@ This document tracks the gap between the implemented security MVP and a producti
 
 **Phase 17 — production hardening.**
 
-The security core is implemented; production readiness now depends on environment verification, Discord integration testing, deployment verification, and operational controls.
+The deterministic security core, recovery lifecycle, AI advisory boundary and dashboard foundation are implemented. Production readiness now depends on environment verification, Discord integration testing, deployment verification and operational controls.
 
 ## Gate matrix
 
@@ -20,7 +20,8 @@ The security core is implemented; production readiness now depends on environmen
 | Groq advisory isolation | Implemented | AI tests + failure isolation |
 | Dashboard OAuth foundation | Implemented | Auth/API tests; production browser verification remains |
 | Render web/worker topology | Configured | `render.yaml`; deploy verification required |
-| Dependency audit | CI configured | GitHub Actions must pass on the branch/main |
+| Readiness endpoint | Implemented | `/health/ready` checks database readiness |
+| Dependency audit | CI configured | GitHub Actions must pass on `main` |
 | Secret hygiene check | CI configured | No non-example `.env` files may be tracked |
 | Discord permission preflight | Implemented | `scripts/discord_preflight.py`; run against a disposable test guild |
 | Full Discord integration suite | Pending | Requires a dedicated disposable test guild |
@@ -30,7 +31,7 @@ The security core is implemented; production readiness now depends on environmen
 | Recovery partial-failure verification | Unit/chaos coverage | Verify with disposable Discord resources |
 | Third-party bot/integration scenarios | Pending live test | Exercise role/bot/webhook threat cases |
 | Production observability | Pending | Logs, metrics, alerting and incident escalation |
-| Render health-check verification | Pending | Confirm `/health` and worker startup after deployment |
+| Render health-check verification | Pending | Confirm `/health/ready` and worker startup after deployment |
 
 ## Read-only Discord preflight
 
@@ -42,16 +43,18 @@ python -m scripts.discord_preflight --guild-id <TEST_GUILD_ID>
 
 The check validates the bot's effective permissions, role hierarchy and owner hierarchy. It does **not** create, delete, edit, or recover Discord resources and it never prints the bot token.
 
-A successful preflight is necessary but not sufficient for production readiness. It only verifies the Discord-side prerequisites that can be checked safely without executing a destructive scenario.
+A successful preflight is necessary but not sufficient for production readiness. It only verifies Discord-side prerequisites that can be checked safely without executing a destructive scenario.
 
 ## Render topology
 
 APXOR uses two processes:
 
-- **Web service:** FastAPI dashboard/API and `/health` endpoint.
+- **Web service:** FastAPI dashboard/API and liveness/readiness endpoints.
 - **Background worker:** Discord Gateway client and security event runtime.
 
 Both services use the repository `Dockerfile`. The web service runs `alembic upgrade head` before starting Uvicorn. The worker only starts the Discord bot and does not run migrations.
+
+The Render web service health check should use `/health/ready`, not only `/health`, so a process that is alive but cannot reach PostgreSQL is not treated as ready.
 
 All production secrets are declared as unsynchronized Render environment variables in `render.yaml`. They must be entered through Render's secret/environment configuration and must never be committed to Git.
 
@@ -93,6 +96,14 @@ For each scenario verify:
 ```text
 Detect -> Attribute -> Score -> Contain -> Notify -> Recover -> Verify -> Persist
 ```
+
+## Failure-injection requirements
+
+- Groq unavailable must not stop deterministic detection, lockdown, notification or recovery.
+- Database interruption must produce an explicit degraded state and recover cleanly.
+- Gateway reconnects must not duplicate enforcement or notification.
+- Worker restart during recovery must resume idempotently.
+- Concurrent destructive actions must aggregate into deterministic incidents.
 
 ## Release rule
 
