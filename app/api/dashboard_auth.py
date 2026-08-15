@@ -90,7 +90,7 @@ async def login() -> RedirectResponse:
 
 
 @router.get("/callback")
-async def callback(code: str, state: str, response: Response, oauth_state: str | None = Cookie(default=None, alias=STATE_COOKIE)) -> dict:
+async def callback(code: str, state: str, oauth_state: str | None = Cookie(default=None, alias=STATE_COOKIE)) -> RedirectResponse:
     _oauth_configured()
     if not oauth_state or not secrets.compare_digest(oauth_state, state):
         raise HTTPException(status_code=400, detail="Invalid OAuth state.")
@@ -129,8 +129,8 @@ async def callback(code: str, state: str, response: Response, oauth_state: str |
     allowed_guilds = _allowed_guild_ids(guilds)
     session_token = _signer().issue(user_id=user_id, guild_ids=allowed_guilds)
     redirect = RedirectResponse(settings.dashboard_frontend_url, status_code=302)
-    response.set_cookie(SESSION_COOKIE, session_token, max_age=settings.dashboard_session_ttl_seconds, httponly=True, secure=_cookie_secure(), samesite=_session_cookie_samesite(), path="/")
-    response.delete_cookie(STATE_COOKIE, path="/")
+    redirect.set_cookie(SESSION_COOKIE, session_token, max_age=settings.dashboard_session_ttl_seconds, httponly=True, secure=_cookie_secure(), samesite=_session_cookie_samesite(), path="/")
+    redirect.delete_cookie(STATE_COOKIE, path="/")
     return redirect
 
 
@@ -139,7 +139,7 @@ async def me(
     x_apxor_dashboard_key: str | None = Header(default=None),
     apxor_dashboard_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict:
-    if settings.dashboard_api_key and x_apxor_dashboard_key and secrets.compare_digest(x_apxor_dashboard_key, settings.dashboard_api_key):
+    if settings.dashboard_api_key and x_apxor_dashboard_key and secrets.compare_digest(x_apxor_dashboard_session or "", settings.dashboard_api_key):
         return {"authenticated": True, "mode": "service"}
     if not apxor_dashboard_session:
         raise HTTPException(status_code=401, detail="Dashboard login required.")
