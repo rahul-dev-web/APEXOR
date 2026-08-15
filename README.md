@@ -4,54 +4,58 @@ APXOR is a security-first Discord anti-nuke platform.
 
 ## Current implementation status
 
-**Overall: ~95% of the backend security MVP architecture is now implemented.**
+**Backend security MVP: ~95% implemented.**
 
-This is an engineering progress estimate, not a claim that the bot is production-ready.
+**Overall APXOR v1 engineering scope: ~80–85% implemented.**
+
+These are engineering progress estimates, not production-readiness claims. The deterministic security core, recovery lifecycle, AI advisory layer, dashboard API, and authenticated dashboard foundation are substantially implemented. Production integration/chaos verification and broader feature coverage remain.
 
 ### Implemented
 
 - FastAPI API foundation + health endpoint
-- Authenticated dashboard security API (service-to-service API key for MVP)
-- Discord Gateway monitoring for guild, role, channel, audit-log, webhook and integration activity
 - SQLAlchemy 2.x async PostgreSQL support with Supabase-compatible configuration
-- Alembic migrations with a single merged head after Phase 1 parallel migration work
-- Guild/security configuration persistence
+- Alembic migrations with a single merged head
+- Discord Gateway monitoring for guild, role, channel, audit-log, webhook and integration activity
 - Deterministic event normalization, duplicate suppression and short-window velocity correlation
-- Deterministic privilege-escalation scoring: `ADMINISTRATOR` reaches emergency risk without AI
+- Deterministic privilege-escalation scoring; `ADMINISTRATOR` reaches emergency risk without AI
 - Real-time Discord audit-log Gateway normalization with actor/target/audit-ID correlation
+- REST audit-log fallback with stale-entry rejection when `created_at` is available
 - Protected-resource lookup and deterministic emergency lockdown
-- Conservative permission auditing and explicit permission enforcement with five-minute reconciliation
+- Conservative permission auditing and explicit permission enforcement with reconciliation
 - Idempotent guild auto-setup with protected APXOR security resources
 - Server-side capability authorization with owner authority, guild-scoped grants and expiry support
 - Authorized APXOR slash commands for security, channel, role and moderation management
-- Read-only `/ai status` and `/ai incident` commands backed by persisted advisory assessments
 - Versioned Discord snapshots and dependency-aware, priority-aware, rate-limit-aware recovery
-- Automatic recovery for high-risk channel/role deletion
-- Deterministic incident aggregation in the persistence layer with short correlation windows and severity escalation
-- Durable recovery batch counters so one restored resource cannot resolve a multi-resource incident prematurely
-- Recovery remains `RECOVERING` until the complete expected target set is verified; any failed target keeps the incident open
+- Automatic high-risk channel/role recovery
+- Role-membership snapshot/recovery support
+- Deterministic incident aggregation and severity escalation
+- Durable recovery batch accounting; incidents remain open until the complete target set is verified
 - Protected alert delivery and owner DM escalation for high/critical/emergency detections
 - Advisory Groq threat analysis with strict structured output, input hashing and asynchronous execution
-- Persistent `ai_threat_assessments` audit records for AI analysis
+- Persistent AI threat-assessment audit records
 - AI failure isolation: Groq cannot block deterministic detection, lockdown, notification or recovery
 - Deterministic security decision kernel separating event risk from enforcement policy
 - Explicit protection state machine with recovery success/failure/degraded transitions
-- `ProtectionRuntime` wired into the Discord Gateway event path as the lifecycle policy boundary
-- Protected-resource containment correctly persists `LOCKDOWN` even when the raw risk band is lower
-- REST audit-log fallback now rejects stale entries when Discord exposes `created_at`, reducing incorrect actor attribution during eventually-consistent correlation
-- Security-core, permission, audit, AI, privilege-escalation, decision-kernel, protection-runtime and dashboard-auth unit tests
+- `ProtectionRuntime` wired into the Discord Gateway event path
+- Unit tests covering security core, permissions, audit correlation, AI, privilege escalation, decision kernel, protection runtime, incident lifecycle and dashboard authentication/API behavior
 - Docker image + GitHub Actions compile/test workflow
+- React/Vite dashboard foundation
+- Discord OAuth dashboard login with signed HttpOnly session cookies
+- Guild-scoped dashboard authorization based on Discord owner/admin/manage-guild access
+- Authenticated security overview with protection score, metrics, health and navigation
+- Dashboard views for security, incidents, events, recovery, snapshots and AI data
 
-### Not yet implemented
+### Remaining
 
 - Complete APXOR command coverage for advanced editing, moderation, snapshots, recovery and configuration
 - `/ai ask` conversational security analyst and dedicated AI channel
-- Role-member assignment restoration and broader Discord resource recovery verification
+- Broader Discord resource recovery and verification coverage
 - Production external queue / worker separation
 - Reconciliation hardening for all eventually-consistent Discord audit/resource cases
-- Full Discord integration/chaos test suite
-- Dashboard end-user authentication/session layer and frontend
+- Full Discord integration and chaos test suite
 - Production observability, alerting and deployment verification
+- Dashboard write workflows with production-grade CSRF/mutation policy
+- Dashboard UX expansion beyond the current security overview/data views
 
 ## Local setup
 
@@ -75,6 +79,11 @@ DATABASE_URL=your_postgresql_connection_string
 GROQ_API_KEY=your_groq_api_key
 GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
 DASHBOARD_API_KEY=your-dashboard-service-secret
+DISCORD_CLIENT_ID=your_discord_oauth_client_id
+DISCORD_CLIENT_SECRET=your_discord_oauth_client_secret
+DISCORD_REDIRECT_URI=https://api.example.com/api/dashboard/auth/callback
+DASHBOARD_FRONTEND_URL=https://dashboard.example.com
+DASHBOARD_SESSION_SECRET=use-a-long-random-secret
 ```
 
 Run the API:
@@ -101,14 +110,22 @@ Run migrations:
 alembic upgrade head
 ```
 
-## Dashboard API
+## Dashboard authentication
 
-The backend now exposes read-only security data for a future dashboard frontend. The MVP uses a server-side `DASHBOARD_API_KEY` and expects it in the `X-APXOR-Dashboard-Key` header.
+The browser-facing dashboard uses Discord OAuth and a signed, HttpOnly session cookie. The backend validates the authenticated Discord principal against the guild IDs returned by Discord OAuth and only exposes a guild to owners or users with `ADMINISTRATOR`/`MANAGE_GUILD` access.
 
-Endpoints:
+The `DASHBOARD_API_KEY` path remains available for trusted server-to-server tooling and tests. **Never expose this secret to browser code.**
+
+Current dashboard endpoints include:
 
 ```text
+GET  /api/dashboard/auth/login
+GET  /api/dashboard/auth/callback
+GET  /api/dashboard/auth/me
+POST /api/dashboard/auth/logout
+
 GET /api/dashboard/health
+GET /api/dashboard/guilds/{guild_id}/overview
 GET /api/dashboard/guilds/{guild_id}/security
 GET /api/dashboard/guilds/{guild_id}/incidents
 GET /api/dashboard/guilds/{guild_id}/events
@@ -117,7 +134,7 @@ GET /api/dashboard/guilds/{guild_id}/recovery
 GET /api/dashboard/guilds/{guild_id}/snapshots
 ```
 
-This is intentionally service-level authentication only. A browser-facing OAuth/session model is a separate dashboard phase and should not be replaced by exposing the service secret to untrusted clients.
+Future dashboard mutation endpoints must add explicit CSRF/session mutation protection and server-side capability authorization before production use.
 
 ## Security architecture
 
@@ -161,11 +178,11 @@ Groq never receives Discord tool access and never authorizes a security mutation
 
 Discord permissions are APXOR's first security boundary. The default critical policy prohibits `ADMINISTRATOR`, `MANAGE_GUILD`, `MANAGE_CHANNELS`, `MANAGE_ROLES`, and `MANAGE_WEBHOOKS` on manageable non-owner roles. Enforcement never rewrites `@everyone`, managed/integration roles, roles at or above APXOR's hierarchy, or the guild owner's top role.
 
-Permission enforcement is configuration-controlled. When enabled, role updates are enforced immediately and the entire guild is reconciled every five minutes.
+Permission enforcement is configuration-controlled. Role updates are enforced immediately and the entire guild is periodically reconciled.
 
 ## Anti-nuke detection
 
-The deterministic engine tracks both repeated and mixed destructive activity. It also treats privilege grants as first-class security signals:
+The deterministic engine tracks repeated and mixed destructive activity and treats privilege grants as first-class security signals:
 
 | Signal | Baseline risk |
 |---|---:|
@@ -179,17 +196,15 @@ Detection does not depend on AI availability.
 
 ## Audit correlation
 
-APXOR consumes Discord's real-time audit-log Gateway signal when available and uses REST Audit Logs as a fallback for resource events. Audit IDs become stable fingerprints so duplicate Gateway/resource signals do not trigger duplicate security actions. REST fallback correlation also rejects stale entries when `created_at` is available, reducing false actor attribution from eventually-consistent audit-log reads.
+APXOR consumes Discord's real-time audit-log Gateway signal when available and uses REST Audit Logs as a fallback for resource events. Audit IDs become stable fingerprints so duplicate Gateway/resource signals do not trigger duplicate security actions. REST fallback correlation rejects stale entries when `created_at` is available, reducing incorrect actor attribution from eventually-consistent reads.
 
 ## Incident and recovery model
 
 High-risk events are grouped into short-lived incidents by guild, actor and attack family. Incident severity escalates deterministically. Recovery uses known-good snapshots and reconstructs Discord state; it cannot resurrect deleted Discord IDs or message history.
 
-Recovery is single-worker, priority-aware and rate-limit-aware. Protected security resources receive higher priority. Multi-resource recovery is tracked as a durable batch: APXOR counts unique destructive targets, keeps the incident open while siblings remain pending, and only transitions to `PROTECTED` after the complete batch is verified. A failed target keeps the incident in `RECOVERY_FAILED`/open state for follow-up recovery.
+Recovery is priority-aware and rate-limit-aware. Protected security resources receive higher priority. Multi-resource recovery is tracked as a durable batch: APXOR counts unique destructive targets, keeps the incident open while siblings remain pending, and only transitions to `PROTECTED` after the complete batch is verified. A failed target keeps the incident open for follow-up recovery.
 
 ## Protection state lifecycle
-
-The protection lifecycle is explicit and deterministic:
 
 ```text
 INITIALIZING -> PROTECTED
@@ -199,7 +214,7 @@ RECOVERING -> PROTECTED | DEGRADED | RECOVERY_FAILED
 RECOVERY_FAILED -> RECOVERING | LOCKDOWN | DEGRADED
 ```
 
-A later low-risk event cannot silently clear active `LOCKDOWN`, `RECOVERING`, or `RECOVERY_FAILED` states. Protected-resource containment can enter `LOCKDOWN` even when the ordinary risk band would otherwise be `SUSPICIOUS`.
+A later low-risk event cannot silently clear active `LOCKDOWN`, `RECOVERING`, or `RECOVERY_FAILED` states.
 
 ## AI security boundary
 
@@ -207,22 +222,31 @@ The Groq threat analyst receives normalized security context only. Its output is
 
 The security pipeline launches AI analysis asynchronously after deterministic event persistence, so model latency or failure cannot block containment or recovery.
 
+## Branch policy
+
+APXOR follows a **single-main-branch workflow**. `main` is the canonical development branch.
+
+Existing feature branches are not treated as parallel development lines. Before deleting them, verify that they contain no commits ahead of `main`. As of the current repository state, the existing branches are all behind `main` and contain **0 commits ahead of `main`**, so no merge is required before cleanup.
+
 ## Roadmap
 
 1. Foundation — **implemented**
 2. Discord Gateway — **implemented; reconciliation hardening next**
-3. Database — **implemented; migration heads merged**
+3. Database — **implemented**
 4. Auto Setup — **implemented**
 5. Permission Auditor — **implemented; policy expansion next**
 6. Capability Authorization — **implemented; command coverage expanding**
 7. Anti-Nuke Detection — **implemented; behavior hardening next**
-8. Audit Correlation — **real-time Gateway + REST fallback implemented; stale-entry hardening added; broader reconciliation next**
+8. Audit Correlation — **Gateway + REST fallback implemented; broader reconciliation next**
 9. Snapshots — **implemented; broader resource coverage next**
-10. Recovery — **dependency/rate-limit/priority MVP + durable batch lifecycle implemented; broader resource verification next**
-11. Lockdown — **deterministic state machine + Gateway runtime + batch-aware recovery lifecycle implemented**
-12. Incident Engine — **implemented; recovery batch accounting added**
-13. Groq Threat Analyst — **runtime + persistence implemented**
+10. Recovery — **MVP lifecycle implemented; broader resource verification next**
+11. Lockdown — **implemented**
+12. Incident Engine — **implemented**
+13. Groq Threat Analyst — **implemented as advisory runtime + persistence**
 14. `/ai` — **status + incident implemented; conversational interface next**
-15. Dashboard API — **read-only security API implemented; end-user auth next**
-16. Dashboard frontend — **next**
-17. Production/chaos testing — **next**
+15. Dashboard API — **implemented**
+16. Dashboard authentication/frontend foundation — **implemented; UX and write workflows next**
+17. Production/integration/chaos testing — **next major phase**
+18. Production observability and deployment verification — **pending**
+
+See [`docs/SECURITY_SPEC_V1.md`](docs/SECURITY_SPEC_V1.md) for the frozen v1 security boundary and production-readiness gates.
