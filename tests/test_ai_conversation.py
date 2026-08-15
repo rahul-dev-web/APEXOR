@@ -9,7 +9,7 @@ from app.core.config import settings
 class _FakeCompletions:
     def create(self, **kwargs):
         assert kwargs["temperature"] == 0
-        assert kwargs["max_tokens"] == 700
+        assert kwargs["max_completion_tokens"] == 700
         assert "Discord tools" in kwargs["messages"][0]["content"]
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content="The latest incident is high risk."))]
