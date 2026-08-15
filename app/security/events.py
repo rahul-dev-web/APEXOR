@@ -105,7 +105,7 @@ class EventCorrelator:
         reasons = signal.reason
         if velocity_bonus:
             reasons += f":velocity_{count}"
-        if mixed_bonus:
+        if mixed_count >= 3:
             reasons += f":destructive_window_{mixed_count}"
         return Detection(
             event,
@@ -121,7 +121,7 @@ class EventCorrelator:
             if count >= 5:
                 return 50
             if count >= 3:
-                return 20
+                return 30
         if event_type in {SecurityEventType.CHANNEL_CREATE, SecurityEventType.ROLE_CREATE}:
             if count >= 10:
                 return 30
@@ -152,21 +152,21 @@ class EventCorrelator:
         if count >= 5:
             return 20
         if count >= 3:
-            return 20
+            return 10
         return 0
 
     def _prune_bucket(self, bucket: deque[float], now: float) -> None:
         cutoff = now - self.window_seconds
-        while bucket and bucket[0] < cutoff:
+        while bucket and bucket[0] <= cutoff:
             bucket.popleft()
 
     def _prune_destructive_bucket(self, bucket: deque[tuple[float, SecurityEventType]], now: float) -> None:
         cutoff = now - self.window_seconds
-        while bucket and bucket[0][0] < cutoff:
+        while bucket and bucket[0][0] <= cutoff:
             bucket.popleft()
 
     def _prune_seen(self, now: float) -> None:
         cutoff = now - self.window_seconds
-        stale = [fingerprint for fingerprint, timestamp in self._seen.items() if timestamp < cutoff]
+        stale = [fingerprint for fingerprint, timestamp in self._seen.items() if timestamp <= cutoff]
         for fingerprint in stale:
             del self._seen[fingerprint]
