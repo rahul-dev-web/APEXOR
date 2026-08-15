@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import Capability
+from app.models.admin_changes import AdminChange
 from app.models.capabilities import UserCapability
 from app.models.guild import Guild
 
@@ -95,6 +96,20 @@ class AuthorizationService:
             existing.granted_by_discord_id = granted_by_discord_id
             existing.expires_at = expires_at
         await session.flush()
+
+        session.add(
+            AdminChange(
+                guild_id=guild.id,
+                actor_discord_id=granted_by_discord_id,
+                action="CAPABILITY_GRANT",
+                target_discord_id=discord_user_id,
+                capability=capability.value,
+                metadata_json={
+                    "expires_at": expires_at.isoformat() if expires_at else None,
+                    "reactivated": existing.id is not None,
+                },
+            )
+        )
         return existing
 
     async def revoke(
@@ -130,5 +145,18 @@ class AuthorizationService:
         )
         if grant is None:
             return False
+        if not grant.enabled:
+            return False
+
         grant.enabled = False
+        session.add(
+            AdminChange(
+                guild_id=guild.id,
+                actor_discord_id=revoked_by_discord_id,
+                action="CAPABILITY_REVOKE",
+                target_discord_id=discord_user_id,
+                capability=capability.value,
+                metadata_json={"previous_expires_at": grant.expires_at.isoformat() if grant.expires_at else None},
+            )
+        )
         return True
