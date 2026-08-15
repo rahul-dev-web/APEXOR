@@ -61,3 +61,43 @@ def test_resolve_overwrites_skips_missing_dependency():
     )
 
     assert overwrites == {}
+
+
+def test_resolve_overwrites_maps_member_targets_without_role_collision():
+    member = FakeTarget(id=7007)
+    guild = FakeGuild(members={7007: member})
+
+    overwrites = RecoveryEngine._resolve_overwrites(
+        guild,
+        [
+            {
+                "target_id": 7001,
+                "target_type": "member",
+                "allow": 8,
+                "deny": 16,
+            }
+        ],
+        restored_ids={7001: 7007},
+    )
+
+    assert list(overwrites.keys()) == [member]
+    allow, deny = overwrites[member].pair()
+    assert allow.value == 8
+    assert deny.value == 16
+
+
+def test_resolve_overwrites_preserves_multiple_targets():
+    role = FakeTarget(id=9002)
+    member = FakeTarget(id=7007)
+    guild = FakeGuild(roles={9002: role}, members={7007: member})
+
+    overwrites = RecoveryEngine._resolve_overwrites(
+        guild,
+        [
+            {"target_id": 1001, "target_type": "role", "allow": 1024, "deny": 0},
+            {"target_id": 2001, "target_type": "member", "allow": 8, "deny": 16},
+        ],
+        restored_ids={1001: 9002, 2001: 7007},
+    )
+
+    assert set(overwrites) == {role, member}
