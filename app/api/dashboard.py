@@ -4,19 +4,30 @@ from datetime import datetime
 import secrets
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import desc, select
 
-from app.api.dashboard_auth import require_dashboard_guild_access
+from app.api.dashboard_auth import require_dashboard_guild_access, require_dashboard_mutation_access
 from app.core.config import settings
+from app.core.constants import Capability
 from app.database.session import SessionLocal
 from app.models.ai import AIThreatAssessment
+from app.models.capabilities import UserCapability
 from app.models.events import SecurityEventLog, SecurityIncident
 from app.models.guild import Guild
 from app.models.recovery import RecoveryAction
 from app.models.security import SecurityConfig
 from app.models.snapshots import SecuritySnapshot
+from app.security.authorization import AuthorizationService
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+authorization = AuthorizationService()
+
+
+class CapabilityMutation(BaseModel):
+    discord_user_id: int
+    capability: Capability
+    expires_at: datetime | None = None
 
 
 async def require_dashboard_key(x_apxor_dashboard_key: str | None = Header(default=None)) -> None:
@@ -64,6 +75,105 @@ async def security_overview(guild_id: int) -> dict:
                 "owner_dm_enabled": config.owner_dm_enabled,
             },
         }
+
+
+@router.get("/guilds/{guild_id}/capabilities", dependencies=[Depends(require_dashboard_guild_access)])
+async def capabilities(guild_id: int, limit: int = 200) -> list[dict]:
+    """Return active and inactive APXOR capability grants for dashboard management."""
+    if SessionLocal is None:
+        raise HTTPException(status_code=503, detail="Database is unavailable.")
+    limit = max(1, min(limit, 500))
+    async with SessionLocal() as session:
+        guild = await _guild_or_404(session, guild_id)
+        rows = (await session.scalars(
+            select(UserCapability)
+            .where(UserCapability.guild_id == guild.id)
+            .order_by(desc(UserCapability.created_at))
+            .limit(limit)
+        )).all()
+        return [
+            {
+                "id": row.id,
+                "discord_user_id": row.discord_user_id,
+                "capability": row.capability,
+                "enabled": row.enabled,
+                "granted_by_discord_id": row.granted_by_discord_id,
+                "expires_at": row.expires_at,
+                "created_at": row.created_at,
+            }
+            for row in rows
+        ]
+
+
+@router.post("/guilds/{guild_id}/capabilities/grant")
+async def grant_capability(
+    guild_id: int,
+    payload: CapabilityMutation,
+    principal=Depends(require_dashboard_mutation_access),
+) -> dict:
+    """Grant an APXOR capability using owner/security-manager authority plus CSRF."""
+    if SessionLocal is None:
+        raise HTTPException(status_code=503, detail="Database is unavailable.")
+    async with SessionLocal() as session:
+        await _guild_or_404(session, guild_id)
+        if not await authorization.is_allowed(
+            session,
+            guild_id=guild_id,
+            discord_user_id=principal.user_id,
+            capability=Capability.SECURITY_MANAGE,
+        ):
+            raise HTTPException(status_code=403, detail="SECURITY_MANAGE capability required.")
+        if payload.discord_user_id <= 0:
+            raise HTTPException(status_code=422, detail="discord_user_id must be a positive Discord snowflake.")
+        if payload.expires_at is not None and payload.expires_at <= datetime.now(payload.expires_at.tzinfo):
+            raise HTTPException(status_code=422, detail="expires_at must be in the future.")
+
+        grant = await authorization.grant(
+            session,
+            guild_id=guild_id,
+            discord_user_id=payload.discord_user_id,
+            capability=payload.capability,
+            granted_by_discord_id=principal.user_id,
+            expires_at=payload.expires_at,
+        )
+        await session.commit()
+        return {
+            "id": grant.id,
+            "discord_user_id": grant.discord_user_id,
+            "capability": grant.capability,
+            "enabled": grant.enabled,
+            "granted_by_discord_id": grant.granted_by_discord_id,
+            "expires_at": grant.expires_at,
+        }
+
+
+@router.post("/guilds/{guild_id}/capabilities/revoke")
+async def revoke_capability(
+    guild_id: int,
+    payload: CapabilityMutation,
+    principal=Depends(require_dashboard_mutation_access),
+) -> dict[str, bool]:
+    """Disable an APXOR capability grant; owner/security-manager authority is required."""
+    if SessionLocal is None:
+        raise HTTPException(status_code=503, detail="Database is unavailable.")
+    async with SessionLocal() as session:
+        await _guild_or_404(session, guild_id)
+        if not await authorization.is_allowed(
+            session,
+            guild_id=guild_id,
+            discord_user_id=principal.user_id,
+            capability=Capability.SECURITY_MANAGE,
+        ):
+            raise HTTPException(status_code=403, detail="SECURITY_MANAGE capability required.")
+        revoked = await authorization.revoke(
+            session,
+            guild_id=guild_id,
+            discord_user_id=payload.discord_user_id,
+            capability=payload.capability,
+            revoked_by_discord_id=principal.user_id,
+        )
+        await session.commit()
+        return {"revoked": revoked}
 
 
 @router.get("/guilds/{guild_id}/incidents", dependencies=[Depends(require_dashboard_guild_access)])
