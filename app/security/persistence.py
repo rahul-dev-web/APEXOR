@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.events import SecurityEventLog, SecurityIncident
@@ -58,7 +59,15 @@ class SecurityPersistence:
                     protection_state="PROTECTED",
                 )
             )
-            await session.flush()
+            try:
+                await session.flush()
+            except IntegrityError:
+                # Auto-setup and the first Gateway event can race during
+                # startup. Another transaction may create the guild first.
+                await session.rollback()
+                guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == guild_id))
+                if guild is None:
+                    raise
         else:
             guild.name = name[:100]
             guild.owner_discord_id = owner_id

@@ -1,4 +1,6 @@
 from logging.config import fileConfig
+import asyncio
+import sys
 
 from alembic import context
 from sqlalchemy import pool
@@ -79,6 +81,6 @@ def do_run_migrations(connection: Connection) -> None:
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    import asyncio
-
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(run_async_migrations())

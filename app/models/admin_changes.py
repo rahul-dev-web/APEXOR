@@ -12,9 +12,7 @@ class AdminChange(Base):
     __tablename__ = "admin_changes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    guild_id: Mapped[int] = mapped_column(
-        ForeignKey("guilds.id", ondelete="CASCADE"), index=True
-    )
+    guild_id: Mapped[int] = mapped_column(BigInteger, index=True)
     actor_discord_id: Mapped[int] = mapped_column(BigInteger, index=True)
     action: Mapped[str] = mapped_column(String(64), index=True)
     target_discord_id: Mapped[int] = mapped_column(BigInteger, index=True)

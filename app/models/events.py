@@ -15,7 +15,7 @@ class SecurityEventLog(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    guild_id: Mapped[int] = mapped_column(ForeignKey("guilds.id", ondelete="CASCADE"), index=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, index=True)
     fingerprint: Mapped[str] = mapped_column(String(255), nullable=False)
     event_type: Mapped[str] = mapped_column(String(64), index=True)
     severity: Mapped[str] = mapped_column(String(16), index=True)
@@ -41,7 +41,7 @@ class SecurityIncident(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     incident_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    guild_id: Mapped[int] = mapped_column(ForeignKey("guilds.id", ondelete="CASCADE"), index=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, index=True)
     actor_discord_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     incident_type: Mapped[str] = mapped_column(String(64), index=True)
     severity: Mapped[str] = mapped_column(String(16), index=True)

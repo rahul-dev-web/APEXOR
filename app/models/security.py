@@ -10,7 +10,7 @@ class SecurityConfig(Base):
     __tablename__ = "security_configs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    guild_id: Mapped[int] = mapped_column(ForeignKey("guilds.id", ondelete="CASCADE"), unique=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, unique=True)
     anti_nuke_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_setup_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_permission_audit_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -36,7 +36,7 @@ class SecurityRole(Base):
     __tablename__ = "security_roles"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    guild_id: Mapped[int] = mapped_column(ForeignKey("guilds.id", ondelete="CASCADE"), index=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, index=True)
     discord_role_id: Mapped[int] = mapped_column(BigInteger, index=True)
     role_type: Mapped[str] = mapped_column(String(40))
     role_name: Mapped[str] = mapped_column(String(100))
@@ -47,7 +47,7 @@ class SecurityChannel(Base):
     __tablename__ = "security_channels"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    guild_id: Mapped[int] = mapped_column(ForeignKey("guilds.id", ondelete="CASCADE"), index=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, index=True)
     discord_channel_id: Mapped[int] = mapped_column(BigInteger, index=True)
     channel_type: Mapped[str] = mapped_column(String(40))
     channel_name: Mapped[str] = mapped_column(String(100))

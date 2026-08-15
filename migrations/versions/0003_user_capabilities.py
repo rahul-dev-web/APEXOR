@@ -16,6 +16,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Already created by 0001_initial_security_core.
+    return
+
     op.create_table(
         "user_capabilities",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -39,6 +42,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    return
+
     op.drop_index("ix_user_capabilities_capability", table_name="user_capabilities")
     op.drop_index("ix_user_capabilities_discord_user_id", table_name="user_capabilities")
     op.drop_index("ix_user_capabilities_guild_id", table_name="user_capabilities")

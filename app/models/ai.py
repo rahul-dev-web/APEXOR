@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -12,7 +12,7 @@ class AIThreatAssessment(Base):
     __tablename__ = "ai_threat_assessments"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    guild_id: Mapped[int] = mapped_column(ForeignKey("guilds.id", ondelete="CASCADE"), index=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, index=True)
     event_log_id: Mapped[int | None] = mapped_column(
         ForeignKey("security_event_logs.id", ondelete="SET NULL"), nullable=True, index=True
     )

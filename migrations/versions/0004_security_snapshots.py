@@ -14,6 +14,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Already created by 0001_initial_security_core.
+    return
+
     op.create_table(
         "security_snapshots",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -34,6 +37,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    return
+
     op.drop_index("ix_security_snapshots_resource_id", table_name="security_snapshots")
     op.drop_index("ix_security_snapshots_resource_type", table_name="security_snapshots")
     op.drop_index("ix_security_snapshots_snapshot_key", table_name="security_snapshots")

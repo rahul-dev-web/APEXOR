@@ -36,7 +36,7 @@ def upgrade() -> None:
     op.create_table(
         "security_configs",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("guild_id", sa.Integer(), sa.ForeignKey("guilds.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("guild_id", sa.BigInteger(), nullable=False),
         sa.Column("anti_nuke_enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("auto_setup_enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("auto_permission_audit_enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
@@ -60,7 +60,7 @@ def upgrade() -> None:
     op.create_table(
         "security_roles",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("guild_id", sa.Integer(), sa.ForeignKey("guilds.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("guild_id", sa.BigInteger(), nullable=False),
         sa.Column("discord_role_id", sa.BigInteger(), nullable=False),
         sa.Column("role_type", sa.String(40), nullable=False),
         sa.Column("role_name", sa.String(100), nullable=False),
@@ -72,7 +72,7 @@ def upgrade() -> None:
     op.create_table(
         "security_channels",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("guild_id", sa.Integer(), sa.ForeignKey("guilds.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("guild_id", sa.BigInteger(), nullable=False),
         sa.Column("discord_channel_id", sa.BigInteger(), nullable=False),
         sa.Column("channel_type", sa.String(40), nullable=False),
         sa.Column("channel_name", sa.String(100), nullable=False),
@@ -84,7 +84,7 @@ def upgrade() -> None:
     op.create_table(
         "user_capabilities",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("guild_id", sa.Integer(), sa.ForeignKey("guilds.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("guild_id", sa.BigInteger(), nullable=False),
         sa.Column("discord_user_id", sa.BigInteger(), nullable=False),
         sa.Column("capability", sa.String(64), nullable=False),
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
@@ -100,7 +100,7 @@ def upgrade() -> None:
     op.create_table(
         "security_snapshots",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("guild_id", sa.Integer(), sa.ForeignKey("guilds.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("guild_id", sa.BigInteger(), nullable=False),
         sa.Column("snapshot_key", sa.String(160), nullable=False),
         sa.Column("resource_type", sa.String(32), nullable=False),
         sa.Column("resource_id", sa.BigInteger(), nullable=False),
@@ -121,7 +121,7 @@ def upgrade() -> None:
     op.create_table(
         "security_event_logs",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("guild_id", sa.Integer(), sa.ForeignKey("guilds.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("guild_id", sa.BigInteger(), nullable=False),
         sa.Column("fingerprint", sa.String(255), nullable=False),
         sa.Column("event_type", sa.String(64), nullable=False),
         sa.Column("severity", sa.String(16), nullable=False),
@@ -152,7 +152,7 @@ def upgrade() -> None:
         "security_incidents",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("incident_key", sa.String(255), nullable=False),
-        sa.Column("guild_id", sa.Integer(), sa.ForeignKey("guilds.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("guild_id", sa.BigInteger(), nullable=False),
         sa.Column("actor_discord_id", sa.BigInteger(), nullable=True),
         sa.Column("incident_type", sa.String(64), nullable=False),
         sa.Column("severity", sa.String(16), nullable=False),
@@ -177,7 +177,7 @@ def upgrade() -> None:
     op.create_table(
         "recovery_actions",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("guild_id", sa.Integer(), sa.ForeignKey("guilds.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("guild_id", sa.BigInteger(), nullable=False),
         sa.Column("resource_type", sa.String(32), nullable=False),
         sa.Column("original_resource_id", sa.BigInteger(), nullable=False),
         sa.Column("restored_resource_id", sa.BigInteger(), nullable=True),

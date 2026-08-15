@@ -12,7 +12,7 @@ class RecoveryAction(Base):
     __tablename__ = "recovery_actions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    guild_id: Mapped[int] = mapped_column(ForeignKey("guilds.id", ondelete="CASCADE"), index=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, index=True)
     resource_type: Mapped[str] = mapped_column(String(32), index=True)
     original_resource_id: Mapped[int] = mapped_column(BigInteger, index=True)
     restored_resource_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)

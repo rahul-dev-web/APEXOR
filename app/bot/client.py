@@ -381,7 +381,7 @@ class APEXORClient(discord.Client):
 
             protection = ProtectionRuntime(current_state)
             runtime_result = protection.evaluate(detection, config)
-            decision = runtime_result.decision
+            decision = runtime_result.decision.decision
 
             # Persist the state transition produced by the single deterministic
             # protection runtime before any containment/recovery side effects.

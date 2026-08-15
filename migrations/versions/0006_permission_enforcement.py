@@ -14,6 +14,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Already present in the initial security configuration schema.
+    return
+
     op.add_column(
         "security_configs",
         sa.Column("permission_enforcement_enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
@@ -21,4 +24,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    return
+
     op.drop_column("security_configs", "permission_enforcement_enabled")

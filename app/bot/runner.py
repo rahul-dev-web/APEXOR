@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 
 from app.bot.client import APEXORClient
 from app.core.config import settings
@@ -23,4 +24,6 @@ async def run() -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(level=settings.log_level)
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(run())

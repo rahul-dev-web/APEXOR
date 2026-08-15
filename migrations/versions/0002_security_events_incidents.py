@@ -16,6 +16,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # The initial migration already creates these two tables. Keep this
+    # revision for migration-history compatibility without recreating them.
+    return
+
     op.create_table(
         "security_event_logs",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -74,6 +78,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # The tables belong to the initial migration and are removed there.
+    return
+
     op.drop_index("ix_security_incidents_incident_key", table_name="security_incidents")
     for name in ("status", "severity", "incident_type", "actor_discord_id", "guild_id"):
         op.drop_index(f"ix_security_incidents_{name}", table_name="security_incidents")

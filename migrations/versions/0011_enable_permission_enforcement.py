@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0011_enable_permission_enforcement"
+revision = "0011_permission_enforcement"
 down_revision = "0010_admin_changes"
 branch_labels = None
 depends_on = None

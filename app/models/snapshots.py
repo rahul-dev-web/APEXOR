@@ -15,7 +15,7 @@ class SecuritySnapshot(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    guild_id: Mapped[int] = mapped_column(ForeignKey("guilds.id", ondelete="CASCADE"), index=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, index=True)
     snapshot_key: Mapped[str] = mapped_column(String(160), index=True)
     resource_type: Mapped[str] = mapped_column(String(32), index=True)
     resource_id: Mapped[int] = mapped_column(BigInteger, index=True)
