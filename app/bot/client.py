@@ -91,8 +91,12 @@ class APEXORClient(discord.Client):
         if not self._commands_synced:
             for guild in self.guilds:
                 try:
-                    await self.tree.sync(guild=guild)
-                    logger.info("Synced APEXOR commands to guild=%s", guild.id)
+                    synced = await self.tree.sync(guild=guild)
+                    logger.info(
+                        "Synced APEXOR commands to guild=%s: %s",
+                        guild.id,
+                        [f"{command.name} ({type(command).__name__})" for command in synced],
+                    )
                 except discord.HTTPException:
                     logger.exception("Failed to sync APEXOR commands to guild=%s", guild.id)
             self._commands_synced = True
