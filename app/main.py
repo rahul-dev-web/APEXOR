@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from app.api.dashboard import router as dashboard_router
+from app.api.overview import router as overview_router
 from app.core.config import settings
 from app.core.health import database_health
 from app.core.logging import configure_logging
@@ -18,6 +19,7 @@ app = FastAPI(
 )
 
 app.include_router(dashboard_router)
+app.include_router(overview_router)
 
 
 @app.get("/health")
