@@ -4,7 +4,7 @@ import asyncio
 import logging
 import sys
 
-from app.bot.client import APEXORClient
+from app.bot.client_sync import SyncedAPEXORClient
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ async def run() -> None:
     if not settings.discord_token:
         raise RuntimeError("DISCORD_TOKEN is not configured")
 
-    client = APEXORClient()
+    client = SyncedAPEXORClient()
     try:
         await client.start(settings.discord_token)
     finally:
