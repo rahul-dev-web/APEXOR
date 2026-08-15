@@ -167,6 +167,9 @@ APEXOR is not production-ready until the following are verified:
 - Production observability and alerting.
 - Render deployment and health-check verification.
 - No secrets committed to the repository.
+- A successful **read-only live Discord production preflight** against every guild visible to the production bot. The preflight must verify required bot permissions, APEXOR role hierarchy, and manageable roles carrying protected destructive permissions before any destructive recovery/containment test is attempted.
+
+The live preflight is intentionally operator-controlled and separate from the long-running worker. It must never mutate Discord resources.
 
 ## 14. Success criterion
 
