@@ -13,3 +13,6 @@ htmlcov/
 .idea/
 .vscode/
 *.log
+
+dashboard/node_modules/
+dashboard/dist/
