@@ -4,7 +4,7 @@ import secrets
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Header, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
 from app.core.config import settings
@@ -30,6 +30,11 @@ def _oauth_configured() -> None:
 
 def _cookie_secure() -> bool:
     return settings.app_env.lower() not in {"development", "dev", "test"}
+
+
+def _session_cookie_samesite() -> str:
+    """Allow the HttpOnly session on a separately hosted HTTPS dashboard."""
+    return "none" if _cookie_secure() else "lax"
 
 
 def _allowed_guild_ids(guilds: list[dict]) -> set[int]:
@@ -124,8 +129,8 @@ async def callback(code: str, state: str, response: Response, oauth_state: str |
     allowed_guilds = _allowed_guild_ids(guilds)
     session_token = _signer().issue(user_id=user_id, guild_ids=allowed_guilds)
     redirect = RedirectResponse(settings.dashboard_frontend_url, status_code=302)
-    redirect.set_cookie(SESSION_COOKIE, session_token, max_age=settings.dashboard_session_ttl_seconds, httponly=True, secure=_cookie_secure(), samesite="lax", path="/")
-    redirect.delete_cookie(STATE_COOKIE, path="/")
+    response.set_cookie(SESSION_COOKIE, session_token, max_age=settings.dashboard_session_ttl_seconds, httponly=True, secure=_cookie_secure(), samesite=_session_cookie_samesite(), path="/")
+    response.delete_cookie(STATE_COOKIE, path="/")
     return redirect
 
 
