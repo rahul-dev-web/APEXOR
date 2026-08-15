@@ -27,12 +27,9 @@ class AuthorizationService:
         discord_user_id: int,
         capability: Capability,
     ) -> bool:
-        guild = await session.scalar(
-            select(Guild).where(Guild.discord_guild_id == guild_id)
-        )
+        guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == guild_id))
         if guild is None:
             return False
-
         if discord_user_id == guild.owner_discord_id:
             return True
 
@@ -59,9 +56,7 @@ class AuthorizationService:
         granted_by_discord_id: int,
         expires_at: datetime | None = None,
     ) -> UserCapability:
-        guild = await session.scalar(
-            select(Guild).where(Guild.discord_guild_id == guild_id)
-        )
+        guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == guild_id))
         if guild is None:
             raise ValueError("Guild is not initialized in APXOR")
         if granted_by_discord_id != guild.owner_discord_id:
@@ -81,6 +76,7 @@ class AuthorizationService:
                 UserCapability.capability == capability.value,
             )
         )
+        was_existing = existing is not None
         if existing is None:
             existing = UserCapability(
                 guild_id=guild.id,
@@ -106,7 +102,7 @@ class AuthorizationService:
                 capability=capability.value,
                 metadata_json={
                     "expires_at": expires_at.isoformat() if expires_at else None,
-                    "reactivated": existing.id is not None,
+                    "reactivated": was_existing,
                 },
             )
         )
@@ -130,9 +126,7 @@ class AuthorizationService:
         if not allowed:
             raise PermissionError("SECURITY_MANAGE capability required")
 
-        guild = await session.scalar(
-            select(Guild).where(Guild.discord_guild_id == guild_id)
-        )
+        guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == guild_id))
         if guild is None:
             return False
 
@@ -143,9 +137,7 @@ class AuthorizationService:
                 UserCapability.capability == capability.value,
             )
         )
-        if grant is None:
-            return False
-        if not grant.enabled:
+        if grant is None or not grant.enabled:
             return False
 
         grant.enabled = False
@@ -156,7 +148,9 @@ class AuthorizationService:
                 action="CAPABILITY_REVOKE",
                 target_discord_id=discord_user_id,
                 capability=capability.value,
-                metadata_json={"previous_expires_at": grant.expires_at.isoformat() if grant.expires_at else None},
+                metadata_json={
+                    "previous_expires_at": grant.expires_at.isoformat() if grant.expires_at else None,
+                },
             )
         )
         return True
