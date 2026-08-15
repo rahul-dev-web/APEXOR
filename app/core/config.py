@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     database_url: str = ""
 
     groq_api_key: str = ""
-    groq_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    groq_model: str = "openai/gpt-oss-20b"
 
     # Legacy service-to-service authentication for internal tooling.
     dashboard_api_key: str = ""
