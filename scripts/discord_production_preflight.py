@@ -45,15 +45,19 @@ class GuildCheck:
     bot_permissions_ok: bool
     missing_bot_permissions: tuple[str, ...]
     protected_roles: tuple[str, ...]
-    hierarchy_ok: bool
+    hierarchy_risks: tuple[str, ...]
 
     @property
     def ok(self) -> bool:
-        return self.bot_permissions_ok and self.hierarchy_ok and not self.protected_roles
+        return self.bot_permissions_ok and not self.hierarchy_risks and not self.protected_roles
 
 
 def _permission_names(permissions: discord.Permissions, names: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(name for name in names if not getattr(permissions, name, False))
+
+
+def _has_protected_permission(role: discord.Role) -> bool:
+    return any(getattr(role.permissions, name, False) for name in PROTECTED_ROLE_PERMISSIONS)
 
 
 def inspect_guild(guild: discord.Guild) -> GuildCheck:
@@ -67,26 +71,24 @@ def inspect_guild(guild: discord.Guild) -> GuildCheck:
             bot_permissions_ok=False,
             missing_bot_permissions=REQUIRED_BOT_PERMISSIONS,
             protected_roles=(),
-            hierarchy_ok=False,
+            hierarchy_risks=("bot member/role is unavailable",),
         )
 
     missing = _permission_names(me.guild_permissions, REQUIRED_BOT_PERMISSIONS)
     bot_top_position = me.top_role.position
 
     protected_roles: list[str] = []
-    hierarchy_ok = bot_top_position > 0
+    hierarchy_risks: list[str] = []
     for role in guild.roles:
         if role.is_default() or role.managed:
             continue
         if role.position >= bot_top_position:
+            if _has_protected_permission(role):
+                hierarchy_risks.append(f"{role.name} (protected permission at/above bot role)")
             continue
-        if role.permissions.administrator or any(
-            getattr(role.permissions, name, False) for name in PROTECTED_ROLE_PERMISSIONS[1:]
-        ):
+        if _has_protected_permission(role):
             protected_roles.append(role.name)
 
-    # The guild owner is intentionally outside APEXOR's control and is not
-    # treated as a failure when evaluating Discord's role hierarchy.
     return GuildCheck(
         guild_id=guild.id,
         guild_name=guild.name,
@@ -95,7 +97,7 @@ def inspect_guild(guild: discord.Guild) -> GuildCheck:
         bot_permissions_ok=not missing,
         missing_bot_permissions=missing,
         protected_roles=tuple(sorted(protected_roles)),
-        hierarchy_ok=hierarchy_ok,
+        hierarchy_risks=tuple(sorted(hierarchy_risks)),
     )
 
 
@@ -140,7 +142,10 @@ def _print_results(results: list[GuildCheck]) -> None:
             print("  Manageable roles with protected permissions: " + ", ".join(result.protected_roles))
         else:
             print("  Manageable protected-permission roles: none")
-        print(f"  Role hierarchy: {'OK' if result.hierarchy_ok else 'INVALID'}")
+        if result.hierarchy_risks:
+            print("  Hierarchy risks: " + ", ".join(result.hierarchy_risks))
+        else:
+            print("  Hierarchy risks: none")
         print()
 
 
