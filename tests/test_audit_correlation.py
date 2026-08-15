@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import discord
@@ -70,6 +71,54 @@ async def test_ignores_unrelated_audit_target():
     )
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_ignores_stale_audit_entry_for_same_target():
+    entry = SimpleNamespace(
+        id=998,
+        action=discord.AuditLogAction.channel_delete,
+        target=SimpleNamespace(id=456),
+        user=SimpleNamespace(id=321),
+        created_at=datetime.now(timezone.utc) - timedelta(seconds=31),
+    )
+    guild = SimpleNamespace(audit_logs=lambda **kwargs: AsyncEntries([entry]))
+
+    result = await AuditLogCorrelator().correlate(
+        guild,
+        SecurityEvent(
+            guild_id=1,
+            event_type=SecurityEventType.CHANNEL_DELETE,
+            target_id=456,
+        ),
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_accepts_recent_audit_entry_with_timestamp():
+    entry = SimpleNamespace(
+        id=1000,
+        action=discord.AuditLogAction.channel_delete,
+        target=SimpleNamespace(id=456),
+        user=SimpleNamespace(id=654),
+        created_at=datetime.now(timezone.utc) - timedelta(seconds=2),
+    )
+    guild = SimpleNamespace(audit_logs=lambda **kwargs: AsyncEntries([entry]))
+
+    result = await AuditLogCorrelator().correlate(
+        guild,
+        SecurityEvent(
+            guild_id=1,
+            event_type=SecurityEventType.CHANNEL_DELETE,
+            target_id=456,
+        ),
+    )
+
+    assert result is not None
+    assert result.audit_log_id == 1000
+    assert result.actor_id == 654
 
 
 @pytest.mark.asyncio
