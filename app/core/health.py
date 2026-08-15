@@ -20,24 +20,30 @@ async def database_health() -> tuple[bool, str]:
 
 
 async def system_health() -> dict[str, object]:
-    """Return a safe, non-secret dependency health snapshot for operations."""
+    """Return a safe dependency snapshot without treating advisory AI as a blocker.
+
+    APEXOR's deterministic security path must continue to be considered ready when
+    Groq is unavailable or dashboard authentication is not configured. AI is an
+    advisory capability and the dashboard is a separate surface; neither is the
+    root of trust for Discord security processing.
+    """
     db_ok, db_status = await database_health()
     ai_configured = bool(settings.groq_api_key and settings.groq_model)
     dashboard_auth_configured = bool(settings.dashboard_session_secret)
 
-    checks = {
-        "database": db_ok,
-        "ai": ai_configured,
-        "dashboard_auth": dashboard_auth_configured,
-    }
-    overall_ok = all(checks.values())
+    # Database connectivity is the API's core readiness dependency. AI and
+    # dashboard auth are reported as degraded capabilities, not blockers for the
+    # deterministic security core.
+    core_ready = db_ok
+    status = "ok" if core_ready and ai_configured and dashboard_auth_configured else "degraded"
 
     return {
-        "status": "ok" if overall_ok else "degraded",
+        "status": status,
         "checks": {
             "database": db_status,
             "ai": "configured" if ai_configured else "not_configured",
             "dashboard_auth": "configured" if dashboard_auth_configured else "not_configured",
         },
-        "ready": overall_ok,
+        "ready": core_ready,
+        "core_ready": core_ready,
     }
