@@ -1,13 +1,3 @@
-"""Run the operator-controlled, read-only Discord production preflight.
-
-Usage:
-    python scripts/discord_preflight.py
-    python scripts/discord_preflight.py --guild-id 1234567890
-
-The command only reads guild/member/role state. It does not create, edit or
-delete Discord resources and is intentionally separate from the worker.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -17,64 +7,93 @@ import sys
 import discord
 
 from app.core.config import settings
-from app.security.preflight import analyze_guild_preflight, preflight_passes
+from app.security.permissions.policy import DEFAULT_PERMISSION_POLICY
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="APEXOR read-only Discord production preflight")
-    parser.add_argument("--guild-id", type=int, help="Only inspect this guild")
-    return parser
-
-
-async def _run(guild_id: int | None) -> int:
+async def run_preflight(guild_id: int | None) -> int:
+    """Run a strictly read-only Discord production preflight."""
     if not settings.discord_token:
-        print("ERROR: DISCORD_TOKEN is not configured.", file=sys.stderr)
+        print("FAIL: DISCORD_TOKEN is not configured")
         return 2
 
-    intents = discord.Intents.none()
-    intents.guilds = True
-    client = discord.Client(intents=intents)
-    result_code = 0
-
-    @client.event
-    async def on_ready() -> None:
-        nonlocal result_code
-        guilds = [client.get_guild(guild_id)] if guild_id else list(client.guilds)
-        guilds = [guild for guild in guilds if guild is not None]
-
-        if guild_id and not guilds:
-            print(f"ERROR: Guild {guild_id} is not visible to the bot.", file=sys.stderr)
-            result_code = 3
-        else:
-            for guild in guilds:
-                findings = analyze_guild_preflight(guild)
-                passed = preflight_passes(findings)
-                status = "PASS" if passed else "FAIL"
-                print(f"\n[{status}] {guild.name} ({guild.id})")
-                for finding in findings:
-                    resource = f" resource={finding.resource_id}" if finding.resource_id else ""
-                    print(f"  {finding.severity}: {finding.code}{resource} — {finding.message}")
-                if not passed:
-                    result_code = 4
-
-        await client.close()
-
+    client = discord.Client(intents=discord.Intents.none())
     try:
-        await client.start(settings.discord_token)
-    except discord.LoginFailure:
-        print("ERROR: Discord rejected DISCORD_TOKEN.", file=sys.stderr)
-        return 5
-    finally:
-        if not client.is_closed():
-            await client.close()
+        await client.login(settings.discord_token)
+        if guild_id is not None:
+            guilds = [await client.fetch_guild(guild_id)]
+        else:
+            guilds = [guild async for guild in client.fetch_guilds(limit=None)]
 
-    return result_code
+        overall_ok = True
+        print(f"APEXOR read-only preflight: {len(guilds)} guild(s)")
+
+        for guild in guilds:
+            print(f"\n[{guild.name}] ({guild.id})")
+            try:
+                me = await guild.fetch_member(client.user.id)  # type: ignore[union-attr]
+            except discord.HTTPException as exc:
+                print(f"  FAIL  could not resolve bot member: {exc}")
+                overall_ok = False
+                continue
+
+            perms = me.guild_permissions
+            required = {
+                "view_audit_log": perms.view_audit_log,
+                "manage_roles": perms.manage_roles,
+                "manage_channels": perms.manage_channels,
+                "manage_webhooks": perms.manage_webhooks,
+            }
+            for name, enabled in required.items():
+                print(f"  {'PASS' if enabled else 'FAIL'}  bot permission: {name}")
+                overall_ok &= enabled
+
+            top_role = me.top_role
+            print(f"  INFO  bot top role: {top_role.name} ({top_role.id}) position={top_role.position}")
+            print(f"  PASS  owner id: {guild.owner_id}")
+
+            protected_names = set(DEFAULT_PERMISSION_POLICY.critical_permissions)
+            violations = []
+            for role in guild.roles:
+                if role.is_default() or role.managed or role.is_bot_managed():
+                    continue
+                dangerous = sorted(name for name in protected_names if getattr(role.permissions, name, False))
+                if not dangerous:
+                    continue
+                status = "UNMANAGEABLE" if role >= top_role else "MANAGEABLE"
+                violations.append((role, dangerous, status))
+
+            if not violations:
+                print("  PASS  no non-managed role carries protected destructive permissions")
+            else:
+                for role, dangerous, status in violations:
+                    print(
+                        f"  FAIL  role={role.name!r} id={role.id} position={role.position} "
+                        f"status={status} permissions={','.join(dangerous)}"
+                    )
+                overall_ok = False
+
+            if top_role.is_default():
+                print("  FAIL  APEXOR role is at @everyone level; hierarchy is unsafe")
+                overall_ok = False
+
+        print("\nRESULT:", "PASS - safe to proceed to controlled destructive testing" if overall_ok else "FAIL - do not run destructive tests")
+        return 0 if overall_ok else 1
+    finally:
+        await client.close()
 
 
 def main() -> int:
-    args = _build_parser().parse_args()
-    return asyncio.run(_run(args.guild_id))
+    parser = argparse.ArgumentParser(description="Read-only APEXOR Discord production preflight")
+    parser.add_argument("--guild", type=int, help="Only inspect this Discord guild ID")
+    args = parser.parse_args()
+    try:
+        return asyncio.run(run_preflight(args.guild))
+    except (discord.LoginFailure, discord.HTTPException) as exc:
+        print(f"FAIL: Discord connection failed: {exc}")
+        return 2
+    except KeyboardInterrupt:
+        return 130
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

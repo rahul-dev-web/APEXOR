@@ -91,12 +91,6 @@ class APEXORClient(discord.Client):
         if not self._commands_synced:
             for guild in self.guilds:
                 try:
-                    # Commands are registered on the global CommandTree. Passing a guild
-                    # directly to sync() only syncs commands explicitly scoped to that
-                    # guild, which previously produced an empty command list. Copy the
-                    # global commands into each guild first so they become available
-                    # immediately instead of waiting for Discord's global propagation.
-                    self.tree.copy_global_to(guild=guild)
                     synced = await self.tree.sync(guild=guild)
                     logger.info(
                         "Synced APEXOR commands to guild=%s: %s",
@@ -113,15 +107,7 @@ class APEXORClient(discord.Client):
     async def on_guild_join(self, guild: discord.Guild) -> None:
         logger.info("APEXOR joined guild %s (%s)", guild.name, guild.id)
         try:
-            # Keep newly joined guilds consistent with existing guilds: copy the
-            # global command definitions before performing a guild-scoped sync.
-            self.tree.copy_global_to(guild=guild)
-            synced = await self.tree.sync(guild=guild)
-            logger.info(
-                "Synced APEXOR commands to joined guild=%s: %s",
-                guild.id,
-                [f"{command.name} ({type(command).__name__})" for command in synced],
-            )
+            await self.tree.sync(guild=guild)
         except discord.HTTPException:
             logger.exception("Failed to sync APEXOR commands to joined guild=%s", guild.id)
         await self._run_auto_setup(guild)
@@ -368,19 +354,130 @@ class APEXORClient(discord.Client):
             match = None
             if event.audit_log_id is None and (config is None or config.audit_correlation_enabled):
                 match = await self.audit_correlator.correlate(guild, event)
-                if match is not None:
-                    event.actor_id = match.actor_id
-                    event.audit_log_id = match.audit_log_id
+            if match is not None:
+                event = SecurityEvent(
+                    guild_id=event.guild_id,
+                    event_type=event.event_type,
+                    target_id=event.target_id,
+                    actor_id=match.actor_id,
+                    protected_target=event.protected_target,
+                    audit_log_id=match.audit_log_id,
+                    event_id=event.event_id,
+                    timestamp=event.timestamp,
+                    permission_added=event.permission_added,
+                    permission_removed=event.permission_removed,
+                )
+                logger.info("Audit correlation: guild=%s audit=%s actor=%s action=%s target=%s", event.guild_id, match.audit_log_id, match.actor_id, match.action, event.target_id)
 
-            detection = self.event_correlator.record(event)
-            detection.guild = guild
-            detection = self.event_correlator.classify(detection)
-            await self.security_persistence.persist_event(session, detection)
-            await session.commit()
+            if event.target_id is not None:
+                protected = await self.protected_resources.is_protected_target(session, guild_id=event.guild_id, target_id=event.target_id, event_type=event.event_type.value)
+                if protected and not event.protected_target:
+                    event = SecurityEvent(
+                        guild_id=event.guild_id,
+                        event_type=event.event_type,
+                        target_id=event.target_id,
+                        actor_id=event.actor_id,
+                        protected_target=True,
+                        audit_log_id=event.audit_log_id,
+                        event_id=event.event_id,
+                        timestamp=event.timestamp,
+                        permission_added=event.permission_added,
+                        permission_removed=event.permission_removed,
+                    )
 
-        if detection.signal.score >= 60:
-            await self.lockdown.evaluate(guild, detection)
-            await self.notifier.notify(guild, detection)
-            asyncio.create_task(self._run_ai_analysis(detection, detection.event_log_id))
+            detection = self.event_correlator.process(event)
+            if detection.velocity_count == 0:
+                logger.debug("Duplicate security event suppressed: %s", event.fingerprint)
+                return None
 
-        return detection
+            await self.security_persistence.ensure_guild(session, event.guild_id, name=guild.name, owner_id=guild.owner_id or 0)
+            persisted_event_id = await self.security_persistence.record(session, detection)
+            logger.info("Security event: guild=%s type=%s actor=%s target=%s risk=%d velocity=%d/%ss reason=%s", event.guild_id, event.event_type.value, event.actor_id, event.target_id, detection.signal.score, detection.velocity_count, detection.velocity_window_seconds, detection.signal.reason)
+
+            db_guild = await session.scalar(select(Guild).where(Guild.discord_guild_id == event.guild_id))
+            if db_guild is None:
+                logger.critical("Guild record disappeared during security processing: guild=%s", event.guild_id)
+                return detection
+
+            try:
+                current_state = ProtectionState(db_guild.protection_state)
+            except ValueError:
+                logger.critical(
+                    "Invalid persisted protection state for guild=%s: %r; resetting to INITIALIZING",
+                    event.guild_id,
+                    db_guild.protection_state,
+                )
+                current_state = ProtectionState.INITIALIZING
+
+            protection = ProtectionRuntime(current_state)
+            runtime_result = protection.evaluate(detection, config)
+            decision = runtime_result.decision.decision
+
+            # Persist the state transition produced by the single deterministic
+            # protection runtime before any containment/recovery side effects.
+            db_guild.protection_state = runtime_result.state.value
+            db_guild.protection_score = decision.risk_score
+            await session.flush()
+
+            logger.debug(
+                "Security decision: guild=%s previous_state=%s state=%s severity=%s lockdown=%s recover=%s ai=%s risk=%d",
+                event.guild_id,
+                current_state.value,
+                runtime_result.state.value,
+                decision.severity,
+                runtime_result.should_lockdown,
+                decision.should_recover,
+                decision.should_analyze_with_ai,
+                decision.risk_score,
+            )
+
+            if decision.should_analyze_with_ai:
+                asyncio.create_task(self._run_ai_analysis(detection, persisted_event_id))
+
+            if runtime_result.should_lockdown:
+                actions = await self.lockdown.enter_lockdown(
+                    session,
+                    guild,
+                    actor_id=event.actor_id,
+                    event_log_id=persisted_event_id,
+                )
+                logger.critical(
+                    "APEXOR LOCKDOWN: guild=%s actor=%s risk=%d actions=%s",
+                    event.guild_id,
+                    event.actor_id,
+                    decision.risk_score,
+                    actions,
+                )
+
+            if decision.severity is not None:
+                await self.notifier.notify(
+                    session,
+                    guild,
+                    severity=decision.severity,
+                    event_type=event.event_type.value,
+                    actor_id=event.actor_id,
+                    target_id=event.target_id,
+                    risk_score=decision.risk_score,
+                    reason=detection.signal.reason,
+                    owner_dm_enabled=config.owner_dm_enabled if config else True,
+                    notification_enabled=config.notification_enabled if config else True,
+                )
+
+            if decision.should_recover:
+                queued = await self.recovery_orchestrator.enqueue(
+                    guild_id=event.guild_id,
+                    resource_type=decision.recovery_resource_type or "UNKNOWN",
+                    resource_id=event.target_id or 0,
+                    reason=f"Automatic recovery after {event.event_type.value}; risk={decision.risk_score}; actor={event.actor_id}",
+                    priority=decision.recovery_priority or 50,
+                )
+                if not queued:
+                    logger.critical(
+                        "RECOVERY QUEUE REJECTED: guild=%s resource=%s/%s risk=%s",
+                        event.guild_id,
+                        decision.recovery_resource_type,
+                        event.target_id,
+                        decision.risk_score,
+                    )
+
+            return detection
