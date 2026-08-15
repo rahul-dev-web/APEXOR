@@ -113,6 +113,10 @@ class SnapshotService:
                 "hoist": role.hoist,
                 "mentionable": role.mentionable,
                 "managed": role.managed,
+                # Role membership is part of recoverable authorization state.
+                # The IDs are only a snapshot; recovery verifies each member
+                # still exists before attempting to reassign the role.
+                "member_ids": [member.id for member in role.members],
             }
 
         channel: discord.abc.GuildChannel = resource
