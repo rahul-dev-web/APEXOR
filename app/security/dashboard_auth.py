@@ -69,3 +69,24 @@ class DashboardSessionSigner:
             return DashboardPrincipal(user_id=user_id, guild_ids=guild_ids, expires_at=int(payload["exp"]))
         except (ValueError, KeyError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ValueError("invalid dashboard session") from exc
+
+    def issue_csrf_token(self, session_token: str) -> str:
+        """Create a session-bound signed CSRF token for browser mutations."""
+        nonce = secrets.token_urlsafe(32)
+        message = f"{session_token}.{nonce}"
+        signature = hmac.new(self._secret, message.encode("utf-8"), hashlib.sha256).digest()
+        return f"{nonce}.{self._encode(signature)}"
+
+    def verify_csrf_token(self, session_token: str, csrf_token: str) -> bool:
+        """Verify that a CSRF token was minted for this exact session token."""
+        try:
+            nonce, signature = csrf_token.split(".", 1)
+            if not nonce or not signature:
+                return False
+            message = f"{session_token}.{nonce}"
+            expected = self._encode(
+                hmac.new(self._secret, message.encode("utf-8"), hashlib.sha256).digest()
+            )
+            return secrets.compare_digest(signature, expected)
+        except (ValueError, TypeError):
+            return False
