@@ -129,7 +129,7 @@ class GuildAutoSetup:
 
         # The bot is not automatically assigned APEXOR-SECURITY. Explicitly
         # allowing its managed bot role prevents the @everyone deny from
-        # locking APXOR out of its own alert/audit/recovery channels.
+        # locking APEXOR out of its own alert/audit/recovery channels.
         bot_member = guild.me
         if bot_member is not None:
             overwrites[bot_member.top_role] = discord.PermissionOverwrite(

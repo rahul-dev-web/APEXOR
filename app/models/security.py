@@ -14,7 +14,7 @@ class SecurityConfig(Base):
     anti_nuke_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_setup_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_permission_audit_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    # Security-first default: once APXOR bootstraps a guild, manageable non-owner
+    # Security-first default: once APEXOR bootstraps a guild, manageable non-owner
     # roles must not retain the critical Discord permissions covered by the policy.
     permission_enforcement_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     audit_correlation_enabled: Mapped[bool] = mapped_column(Boolean, default=True)

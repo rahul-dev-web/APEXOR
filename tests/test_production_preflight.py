@@ -5,7 +5,7 @@ def _set_valid_environment(monkeypatch) -> None:
     values = {
         "APP_ENV": "production",
         "DISCORD_TOKEN": "test-token",
-        "DATABASE_URL": "postgresql://user:password@example.com/apxor",
+        "DATABASE_URL": "postgresql://user:password@example.com/apexor",
         "DISCORD_CLIENT_ID": "123",
         "DISCORD_CLIENT_SECRET": "secret",
         "DISCORD_REDIRECT_URI": "https://api.example.com/api/dashboard/auth/callback",
