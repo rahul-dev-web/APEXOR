@@ -144,13 +144,15 @@ class EventCorrelator:
 
     @staticmethod
     def _mixed_attack_bonus(count: int, distinct_types: int) -> int:
-        """Add a bounded destructive-window escalation on top of action velocity."""
+        """Escalate mixed destructive behavior, not repeated copies of one action."""
+        if distinct_types < 2:
+            return 0
         if count >= 10:
             return 30
         if count >= 5:
-            return 10
-        if distinct_types >= 2 and count >= 3:
-            return 10
+            return 20
+        if count >= 3:
+            return 20
         return 0
 
     def _prune_bucket(self, bucket: deque[float], now: float) -> None:
