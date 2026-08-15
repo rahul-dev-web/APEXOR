@@ -6,7 +6,7 @@ services:
     dockerContext: .
     healthCheckPath: /health/ready
     autoDeploy: true
-    startCommand: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    startCommand: sh -c "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     envVars:
       - key: APP_ENV
         value: production
@@ -37,7 +37,7 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     autoDeploy: true
-    startCommand: python -m app.bot.runner
+    startCommand: python -m scripts.worker_entrypoint
     envVars:
       - key: APP_ENV
         value: production
