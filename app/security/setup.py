@@ -53,6 +53,9 @@ class GuildAutoSetup:
         category = self._find_category(guild)
         if category is None:
             category = await self._create_category(guild, security_role)
+        else:
+            await self._ensure_category_permissions(guild, category, security_role)
+
         await self._ensure_channels(session, guild, category, security_role)
 
         db_guild.protection_state = ProtectionState.PROTECTED.value
@@ -105,13 +108,57 @@ class GuildAutoSetup:
         return discord.utils.get(guild.categories, name=self.CATEGORY_NAME)
 
     async def _create_category(self, guild: discord.Guild, security_role: discord.Role) -> discord.CategoryChannel:
+        category = await guild.create_category(
+            self.CATEGORY_NAME,
+            overwrites=self._category_overwrites(guild, security_role),
+            reason="APEXOR security bootstrap",
+        )
+        return category
+
+    def _category_overwrites(
+        self, guild: discord.Guild, security_role: discord.Role
+    ) -> dict[discord.abc.Snowflake, discord.PermissionOverwrite]:
         overwrites: dict[discord.abc.Snowflake, discord.PermissionOverwrite] = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            security_role: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+            security_role: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+            ),
         }
+
+        # The bot is not automatically assigned APEXOR-SECURITY. Explicitly
+        # allowing its managed bot role prevents the @everyone deny from
+        # locking APXOR out of its own alert/audit/recovery channels.
+        bot_member = guild.me
+        if bot_member is not None:
+            overwrites[bot_member.top_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                manage_channels=True,
+                manage_messages=True,
+            )
+
         if guild.owner is not None:
-            overwrites[guild.owner] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
-        return await guild.create_category(self.CATEGORY_NAME, overwrites=overwrites, reason="APEXOR security bootstrap")
+            overwrites[guild.owner] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+            )
+        return overwrites
+
+    async def _ensure_category_permissions(
+        self, guild: discord.Guild, category: discord.CategoryChannel, security_role: discord.Role
+    ) -> None:
+        """Repair only APEXOR-owned category entries; leave unrelated ACLs intact."""
+        overwrites = self._category_overwrites(guild, security_role)
+        for target, overwrite in overwrites.items():
+            await category.set_permissions(
+                target,
+                overwrite=overwrite,
+                reason="APEXOR security channel permission reconciliation",
+            )
 
     async def _ensure_channels(
         self, session: AsyncSession, guild: discord.Guild, category: discord.CategoryChannel, security_role: discord.Role
