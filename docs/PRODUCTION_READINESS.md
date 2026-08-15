@@ -22,6 +22,7 @@ The security core is implemented; production readiness now depends on environmen
 | Render web/worker topology | Configured | `render.yaml`; deploy verification required |
 | Dependency audit | CI configured | GitHub Actions must pass on the branch/main |
 | Secret hygiene check | CI configured | No non-example `.env` files may be tracked |
+| Discord permission preflight | Implemented | `scripts/discord_preflight.py`; run against a disposable test guild |
 | Full Discord integration suite | Pending | Requires a dedicated disposable test guild |
 | Gateway reconnect/duplicate/missing event tests | Partially covered | Add live integration coverage |
 | Discord 429 recovery | Unit-level coverage | Verify against live API rate-limit behavior |
@@ -30,6 +31,18 @@ The security core is implemented; production readiness now depends on environmen
 | Third-party bot/integration scenarios | Pending live test | Exercise role/bot/webhook threat cases |
 | Production observability | Pending | Logs, metrics, alerting and incident escalation |
 | Render health-check verification | Pending | Confirm `/health` and worker startup after deployment |
+
+## Read-only Discord preflight
+
+Before any live integration test, run the preflight against a **disposable test guild**:
+
+```powershell
+python -m scripts.discord_preflight --guild-id <TEST_GUILD_ID>
+```
+
+The check validates the bot's effective permissions, role hierarchy and owner hierarchy. It does **not** create, delete, edit, or recover Discord resources and it never prints the bot token.
+
+A successful preflight is necessary but not sufficient for production readiness. It only verifies the Discord-side prerequisites that can be checked safely without executing a destructive scenario.
 
 ## Render topology
 
