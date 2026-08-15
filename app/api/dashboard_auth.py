@@ -13,7 +13,9 @@ from app.security.dashboard_auth import DashboardPrincipal, DashboardSessionSign
 router = APIRouter(prefix="/api/dashboard/auth", tags=["dashboard-auth"])
 
 SESSION_COOKIE = "apxor_dashboard_session"
+CSRF_COOKIE = "apxor_dashboard_csrf"
 STATE_COOKIE = "apxor_dashboard_oauth_state"
+CSRF_HEADER = "X-APXOR-CSRF-Token"
 
 
 def _signer() -> DashboardSessionSigner:
@@ -34,6 +36,10 @@ def _cookie_secure() -> bool:
 
 def _session_cookie_samesite() -> str:
     """Allow the HttpOnly session on a separately hosted HTTPS dashboard."""
+    return "none" if _cookie_secure() else "lax"
+
+
+def _csrf_cookie_samesite() -> str:
     return "none" if _cookie_secure() else "lax"
 
 
@@ -70,6 +76,37 @@ async def require_dashboard_guild_access(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired dashboard session.") from exc
     if guild_id not in principal.guild_ids:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have dashboard access to this guild.")
+    return principal
+
+
+async def require_dashboard_mutation_access(
+    request: Request,
+    guild_id: int,
+    x_apxor_csrf_token: str | None = Header(default=None, alias=CSRF_HEADER),
+    apxor_dashboard_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+    apxor_dashboard_csrf: str | None = Cookie(default=None, alias=CSRF_COOKIE),
+) -> DashboardPrincipal:
+    """Require a real browser session plus a session-bound CSRF token.
+
+    Mutating dashboard endpoints intentionally do not accept the service API
+    key, because a server-to-server secret cannot establish which Discord
+    operator initiated a privileged mutation.
+    """
+    if not apxor_dashboard_session:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Dashboard login required.")
+    try:
+        principal = _signer().verify(apxor_dashboard_session)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired dashboard session.") from exc
+
+    if guild_id not in principal.guild_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have dashboard access to this guild.")
+    if not x_apxor_csrf_token or not apxor_dashboard_csrf:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF protection required for dashboard mutations.")
+    if not secrets.compare_digest(x_apxor_csrf_token, apxor_dashboard_csrf):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid dashboard CSRF token.")
+    if not _signer().verify_csrf_token(apxor_dashboard_session, x_apxor_csrf_token):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid dashboard CSRF token.")
     return principal
 
 
@@ -127,17 +164,22 @@ async def callback(code: str, state: str, oauth_state: str | None = Cookie(defau
         raise HTTPException(status_code=502, detail="Discord returned an invalid user identity.") from exc
 
     allowed_guilds = _allowed_guild_ids(guilds)
-    session_token = _signer().issue(user_id=user_id, guild_ids=allowed_guilds)
+    signer = _signer()
+    session_token = signer.issue(user_id=user_id, guild_ids=allowed_guilds)
+    csrf_token = signer.issue_csrf_token(session_token)
     redirect = RedirectResponse(settings.dashboard_frontend_url, status_code=302)
     redirect.set_cookie(SESSION_COOKIE, session_token, max_age=settings.dashboard_session_ttl_seconds, httponly=True, secure=_cookie_secure(), samesite=_session_cookie_samesite(), path="/")
+    redirect.set_cookie(CSRF_COOKIE, csrf_token, max_age=settings.dashboard_session_ttl_seconds, httponly=False, secure=_cookie_secure(), samesite=_csrf_cookie_samesite(), path="/")
     redirect.delete_cookie(STATE_COOKIE, path="/")
     return redirect
 
 
 @router.get("/me")
 async def me(
+    response: Response,
     x_apxor_dashboard_key: str | None = Header(default=None),
     apxor_dashboard_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+    apxor_dashboard_csrf: str | None = Cookie(default=None, alias=CSRF_COOKIE),
 ) -> dict:
     if settings.dashboard_api_key and x_apxor_dashboard_key and secrets.compare_digest(x_apxor_dashboard_key, settings.dashboard_api_key):
         return {"authenticated": True, "mode": "service"}
@@ -147,10 +189,25 @@ async def me(
         principal = _signer().verify(apxor_dashboard_session)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired dashboard session.") from exc
-    return {"authenticated": True, "mode": "discord_oauth", "user_id": principal.user_id, "guild_ids": sorted(principal.guild_ids), "expires_at": principal.expires_at}
+
+    csrf_token = apxor_dashboard_csrf
+    signer = _signer()
+    if not csrf_token or not signer.verify_csrf_token(apxor_dashboard_session, csrf_token):
+        csrf_token = signer.issue_csrf_token(apxor_dashboard_session)
+        response.set_cookie(CSRF_COOKIE, csrf_token, max_age=settings.dashboard_session_ttl_seconds, httponly=False, secure=_cookie_secure(), samesite=_csrf_cookie_samesite(), path="/")
+
+    return {
+        "authenticated": True,
+        "mode": "discord_oauth",
+        "user_id": principal.user_id,
+        "guild_ids": sorted(principal.guild_ids),
+        "expires_at": principal.expires_at,
+        "csrf_token": csrf_token,
+    }
 
 
 @router.post("/logout")
 async def logout(response: Response) -> dict[str, str]:
     response.delete_cookie(SESSION_COOKIE, path="/")
+    response.delete_cookie(CSRF_COOKIE, path="/")
     return {"status": "logged_out"}
